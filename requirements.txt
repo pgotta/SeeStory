@@ -1,0 +1,39 @@
+# ── SeeStory core (everything the app needs to run) ──────────────────────
+Flask==3.0.3
+
+# EPUB + document parsing (shared with Parroty)
+ebooklib==0.18
+beautifulsoup4==4.12.3
+lxml==5.2.2
+pdfplumber==0.11.4
+python-docx==1.1.2
+
+# Image drawing (placeholder frames + any format conversion)
+Pillow==10.4.0
+
+# ── ffmpeg (REQUIRED for Ken Burns motion + final video) ─────────────────
+# Not a pip package. Install on the system:
+#   Windows: winget install ffmpeg     (then restart the terminal)
+#   macOS:   brew install ffmpeg
+#   Ubuntu:  sudo apt install ffmpeg
+
+# ── OPTIONAL · Stable Diffusion backend (local, GPU) ─────────────────────
+# The every-page workhorse. Free, private, runs on your RTX card. Not pulled
+# in above because torch is platform-specific. setup.bat installs these for
+# you; to do it by hand (in this order):
+#
+#   1) PyTorch (CUDA 12.8 build — NVIDIA incl. RTX 50-series):
+#        pip install torch --index-url https://download.pytorch.org/whl/cu128
+#   2) Diffusers stack:
+#        pip install diffusers transformers accelerate safetensors
+#
+#   The default model (stabilityai/sdxl-turbo) downloads itself on first use.
+#   Override with SEESTORY_SD_MODEL if you prefer another.
+
+# ── OPTIONAL · Copilot backend (premium, for the big moments) ────────────
+# Windows-Copilot-API: https://github.com/sums001/Windows-Copilot-API
+#   1) git clone https://github.com/sums001/Windows-Copilot-API
+#   2) cd Windows-Copilot-API && pip install -r requirements.txt
+#   3) python -m copilot login          (one-time Microsoft sign-in)
+#   4) tell SeeStory where it is:  set SEESTORY_COPILOT_PATH=C:\path\to\Windows-Copilot-API
+#      (or just drop that folder right next to the SeeStory folder)

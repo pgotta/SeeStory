@@ -1,0 +1,318 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SeeStory — watch your audiobook</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,600;0,9..144,900;1,9..144,400&family=Spline+Sans:wght@400;600&family=Spline+Sans+Mono:wght@400;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+<link rel="icon" href="{{ url_for('static', filename='owl.svg') }}">
+</head>
+<body>
+<div class="haze"></div>
+
+<header class="masthead">
+  <div class="brand">
+    <svg class="owl-mark" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+      <!-- an owl peering through a film frame: the watcher of the family -->
+      <rect x="6" y="6" width="52" height="52" rx="10" stroke="#e8a23c" stroke-width="2.5"/>
+      <g>
+        <path d="M32 16c-9 0-16 6.5-16 16 0 9 7 16 16 16s16-7 16-16c0-9.5-7-16-16-16z" fill="#211a13" stroke="#c47f24" stroke-width="2"/>
+        <!-- ear tufts -->
+        <path d="M20 20l5 6M44 20l-5 6" stroke="#c47f24" stroke-width="2.5" stroke-linecap="round"/>
+        <!-- big watching eyes -->
+        <circle cx="25" cy="32" r="7.5" fill="#ece0c8"/>
+        <circle cx="39" cy="32" r="7.5" fill="#ece0c8"/>
+        <circle cx="25" cy="32" r="3.4" fill="#15110d"/>
+        <circle cx="39" cy="32" r="3.4" fill="#15110d"/>
+        <circle cx="26.4" cy="30.6" r="1.1" fill="#e8a23c"/>
+        <circle cx="40.4" cy="30.6" r="1.1" fill="#e8a23c"/>
+        <!-- beak -->
+        <path d="M32 36l-3 5h6l-3-5z" fill="#e8a23c"/>
+      </g>
+    </svg>
+    <h1><span class="see">See</span>Story</h1>
+  </div>
+  <p class="tagline">Bring your narrated audiobook to life.</p>
+  <div class="badges">
+    <span class="badge {{ 'on' if ffmpeg_ok else 'off' }}">ffmpeg {{ 'ready' if ffmpeg_ok else 'missing' }}</span>
+    <span class="badge {{ 'on' if probe.stablediffusion else 'off' }}">stable diffusion {{ 'ready' if probe.stablediffusion else 'not installed' }}</span>
+    {% if probe.stablediffusion %}<span class="badge {{ 'on' if probe.cuda else 'warn' }}">{{ 'GPU' if probe.cuda else 'CPU only' }}</span>{% endif %}
+    {% if probe.copilot and probe.copilot_signed_in %}<span class="badge on">copilot signed in</span>
+    {% elif probe.copilot %}<span class="badge warn">copilot — sign in (run login_copilot.bat)</span>
+    {% else %}<span class="badge off">copilot not set up</span>{% endif %}
+    <span class="badge on">placeholder always on</span>
+  </div>
+  {% if probe.copilot and not probe.copilot_signed_in %}
+  <p class="signin-note">Copilot is installed but <b>not signed in</b> — run
+    <code>login_copilot.bat</code>, then restart SeeStory. Until then, premium
+    shots fall back to Stable Diffusion.</p>
+  {% endif %}
+  {% if probe.copilot %}
+  <div class="copilot-tools">
+    <button class="ghost small" id="btn-test-copilot">Test Copilot</button>
+    <span class="ctest-result" id="copilot-test-result"></span>
+    <button class="link" id="copilot-help-toggle">Copilot not working?</button>
+  </div>
+  <div class="copilot-help hidden" id="copilot-help">
+    <b>If the Copilot test fails:</b>
+    <ol>
+      <li><b>Not signed in / clearance:</b> run <code>login_copilot.bat</code>, finish the Microsoft sign-in, then restart SeeStory and test again.</li>
+      <li><b>"invalid-event" or another protocol error:</b> Microsoft changed Copilot and the bundled <code>Windows-Copilot-API</code> library is out of date. Replace the <code>Windows-Copilot-API\copilot</code> folder with the latest from <a href="https://github.com/sums001/Windows-Copilot-API" target="_blank" rel="noopener">the repo</a> (or ask its author), then restart.</li>
+      <li><b>Region blocked / chat-service-unavailable:</b> Copilot's chat isn't available in your region right now.</li>
+      <li>Whatever happens, SeeStory keeps working — it just uses Stable Diffusion for the premium shots instead.</li>
+    </ol>
+  </div>
+  {% endif %}
+</header>
+
+<main>
+  <!-- RESUME / RESTORE -->
+  <section class="resume hidden" id="resume-bar">
+    <div class="resume-head">
+      <span class="resume-title">Resume a recent session</span>
+      <span class="resume-head-actions">
+        <button class="link danger" id="resume-clear">clear all</button>
+        <button class="link" id="resume-dismiss">start fresh instead</button>
+      </span>
+    </div>
+    <div id="resume-list"></div>
+  </section>
+
+  <!-- STEP 1 — INGEST -->
+  <section class="step" id="step-ingest">
+    <div class="step-head"><span class="num">i</span><h2>Bring in the book</h2></div>
+    <p class="hint">Point SeeStory at the same ebook you fed Parroty, plus the audiobook MP3 and the
+      <code>youtube-chapters</code> file Parroty saved next to it. The chapters and timing then line up
+      automatically — every picture changes right as the narration reaches it.</p>
+
+    <div class="drops">
+      <label class="drop" id="drop-ebook" for="file-ebook">
+        <div class="dk">ebook</div><div class="dt">Drop the book</div>
+        <div class="ds" id="ds-ebook">.epub · .pdf · .docx · .txt</div>
+        <input id="file-ebook" type="file" accept=".epub,.pdf,.docx,.doc,.txt,.md,.html,.htm,.rtf" hidden>
+      </label>
+      <label class="drop" id="drop-audio" for="file-audio">
+        <div class="dk">narration</div><div class="dt">Drop Parroty's MP3</div>
+        <div class="ds" id="ds-audio">the combined audiobook</div>
+        <input id="file-audio" type="file" accept=".mp3,.wav,.m4a,.aac" hidden>
+      </label>
+      <label class="drop" id="drop-ts" for="file-ts">
+        <div class="dk">chapters</div><div class="dt">Drop the timestamps</div>
+        <div class="ds" id="ds-ts">youtube-chapters-*.txt — or paste below</div>
+        <input id="file-ts" type="file" accept=".txt" hidden>
+      </label>
+      <label class="drop optional" id="drop-cover" for="file-cover">
+        <div class="dk">cover · optional</div><div class="dt">Drop a book cover</div>
+        <div class="ds" id="ds-cover">shown briefly at the very start — leave blank to skip</div>
+        <input id="file-cover" type="file" accept="image/*" hidden>
+      </label>
+    </div>
+    <textarea class="ts-paste" id="ts-paste" placeholder="…or paste the chapter lines here, e.g.&#10;00:00 Chapter One&#10;04:12 Chapter Two&#10;09:40 Chapter Three"></textarea>
+
+    <div class="step-head" style="margin-top:30px"><span class="num">ii</span><h2>How it should look</h2></div>
+    <p class="hint">Stable Diffusion draws every page on your own GPU (free, unlimited). Copilot is saved for the
+      standout moments — gorgeous, but rate-limited, so it's capped to protect your account.</p>
+
+    <div class="field" style="margin:8px 0 16px">
+      <label>image sources</label>
+      <div class="mode-cards" id="mode-cards">
+        <div class="mode-card sel" data-mode="both">
+          <div class="mc-t">Both</div><div class="mc-s">SD every page · Copilot for the big moments</div>
+        </div>
+        <div class="mode-card" data-mode="sd_only">
+          <div class="mc-t">Stable Diffusion only</div><div class="mc-s">no account, fully local</div>
+        </div>
+        <div class="mode-card" data-mode="copilot_only">
+          <div class="mc-t">Copilot only</div><div class="mc-s">premium, capped &amp; spaced</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="settings">
+      <div class="field">
+        <label for="style_key">art style</label>
+        <select id="style_key">
+          {% set labels = {
+            'photoreal': 'Photorealistic — looks like a real photo',
+            'cinematic': 'Cinematic — painterly illustration',
+            'storybook': 'Storybook — soft watercolor',
+            'noir': 'Noir — high-contrast film noir',
+            'oil': 'Oil painting',
+            'ink': 'Ink & watercolor'} %}
+          {% for s in styles %}<option value="{{ s }}"{% if s == 'cinematic' %} selected{% endif %}>{{ labels.get(s, s) }}</option>{% endfor %}
+        </select>
+        <p class="muted" style="margin:4px 0 0">Pick <b>Photorealistic</b> for real-looking photos instead of a drawing. The first time you use it, it downloads a photo-quality model (~6 GB), then it's cached.</p>
+      </div>
+      <div class="field">
+        <label for="custom_style">custom style (optional — overrides the preset)</label>
+        <input id="custom_style" type="text" placeholder="e.g. 1950s noir comic, ink and gouache">
+        <p class="muted" style="margin:4px 0 0">Describe the <b>visual art style only</b> — medium, palette, mood. Don't put the plot, genre, author, or the word "book" here; words like "book" or a title make the pictures come out with garbled text on them.</p>
+      </div>
+      <div class="field">
+        <label for="sd_guidance">image cleanup <span class="help" tabindex="0" title="How hard Stable Diffusion works to follow the prompt and avoid stray text, watermarks and double-faces. Only affects Stable Diffusion images, not Copilot.&#10;&#10;• Cleaner (recommended): removes most accidental text and duplicate faces. A little slower.&#10;• Classic turbo: fastest, the original look — but text and double-faces can slip in.&#10;• Strong: strongest cleanup and prompt adherence; slowest, can look slightly oversaturated.">ⓘ</span></label>
+        <select id="sd_guidance">
+          <option value="1.6" selected>Cleaner — remove stray text &amp; double-faces (recommended)</option>
+          <option value="0">Classic turbo — fastest, original look</option>
+          <option value="3.0">Strong — strongest cleanup (slower)</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="words_per_page">words per page (how often the picture changes)</label>
+        <input id="words_per_page" type="number" value="280" min="80" max="2000" step="20">
+        <div class="checkline hidden" id="page-status"></div>
+      </div>
+      <div class="field">
+        <label for="pages_per_shot">pages per image</label>
+        <input id="pages_per_shot" type="number" value="1" min="1" max="20">
+      </div>
+      <div class="field" id="cop-every-wrap">
+        <label for="copilot_every_pages">copilot: roughly one per N pages</label>
+        <input id="copilot_every_pages" type="number" value="10" min="2" max="200">
+      </div>
+      <div class="field" id="cop-cap-wrap">
+        <label for="copilot_cap">copilot: hard cap per book (anti-throttle)</label>
+        <input id="copilot_cap" type="number" value="30" min="1" max="200">
+      </div>
+    </div>
+
+        <div class="field">
+      <label for="subtitle_mode">subtitles</label>
+      <select id="subtitle_mode">
+        <option value="none" selected>off</option>
+        <option value="soft">on — toggleable track (viewers can turn on/off)</option>
+        <option value="burn">on — burned into the video (always visible)</option>
+      </select>
+      <div class="sub-upload hidden" id="sub-upload">
+        <label class="sub-file" for="file-subtitle" id="ds-subtitle">
+          ＋ Add Parroty's subtitle file (.srt) for exact timing</label>
+        <input id="file-subtitle" type="file" accept=".srt,.vtt" hidden>
+        <div class="sub-note">Leave blank and SeeStory will auto-generate approximate subtitles from the ebook text (good for Parroty's steady narration, but not frame-perfect).</div>
+      </div>
+    </div>
+
+    <div class="sample-row">
+      <button class="ghost" id="btn-sample">✨ Generate a sample image</button>
+      <span class="muted" id="sample-hint">Draws one random page with Stable Diffusion so you can preview the style. First run loads the model (can take a minute).</span>
+    </div>
+    <div class="sample hidden" id="sample-panel">
+      <div class="sample-text">
+        <div class="sample-meta" id="sample-meta"></div>
+        <p id="sample-page"></p>
+      </div>
+      <div class="sample-img">
+        <div class="sample-imgwrap" id="sample-imgwrap"><span class="empty">…</span></div>
+        <div class="sample-prompt" id="sample-prompt"></div>
+        <button class="ghost small" id="btn-sample-again">↻ Try another page</button>
+      </div>
+    </div>
+
+    <button class="primary big" id="btn-ingest">Build the storyboard →</button>
+    <div class="pbar hidden" id="ingest-pbar"><div class="pbar-fill" id="ingest-fill"></div><div class="pbar-label" id="ingest-label">0%</div></div>
+    <div class="err" id="ingest-err"></div>
+  </section>
+
+  <!-- STEP 2 — STORYBOARD -->
+  <section class="step hidden" id="step-board">
+    <div class="board-top">
+      <button class="ghost back" id="btn-back">← Go back to setup</button>
+    </div>
+    <div class="step-head"><span class="num">iii</span><h2>The storyboard</h2></div>
+    <p class="hint">Every card is one shot, timed to its slice of the narration. Set the motion for
+      every shot below, then fine-tune any single card if you like. Regenerate or delete are always
+      yours to press — nothing redraws itself.</p>
+
+    <div class="field gmotion-field">
+      <div class="gm-head">
+        <label class="gm-master"><input type="checkbox" id="gm-enabled" checked>
+          <span>motion for every shot — slow drift &amp; fades (uncheck for still images)</span></label>
+        <button class="ghost small" id="btn-apply-motion-all" title="Apply these motion settings to every shot. You can still tweak individual cards afterward.">Set all shots to this ↧</button>
+      </div>
+      <div class="gmotion" id="gmotion-body">
+        <div class="gm-controls">
+          <div class="m-row" title="Quick starting points — pick one, then tweak the sliders."><label>preset</label><select id="gm-preset" class="m-sel"><option value="">choose a preset…</option></select></div>
+          <div class="m-row"><label title="Slowly push in, pull out, or stay put.">zoom</label>
+            <select id="gm-zoom" class="m-sel" title="Slowly push in, pull out, or stay put."><option>none</option><option selected>in</option><option>out</option></select>
+            <label style="min-width:34px" title="Slide across the image as it plays.">pan</label>
+            <select id="gm-pan" class="m-sel" title="Slide across the image as it plays."><option selected>none</option><option>left</option><option>right</option><option>up</option><option>down</option></select>
+          </div>
+          <div class="m-row" title="How far the image travels — higher = more obvious movement."><label>intensity</label><input type="range" id="gm-intensity" min="0" max="100" step="1" value="35"><output>35</output></div>
+          <div class="m-row" title="How fast the drift completes. Faster finishes sooner, then HOLDS on the final frame until the page ends — so it never loops or creeps."><label>speed</label><input type="range" id="gm-speed" min="0" max="100" step="1" value="50"><output>50</output></div>
+          <div class="m-row" title="Seconds the picture fades up from black at the start."><label>fade in</label><input type="range" id="gm-fade_in" min="0" max="2.5" step="0.1" value="0.6"><output>0.6</output></div>
+          <div class="m-row" title="Seconds it fades to black before the next picture. Set 0 for a hard cut."><label>fade out</label><input type="range" id="gm-fade_out" min="0" max="2.5" step="0.1" value="0.6"><output>0.6</output></div>
+          <div class="m-row" title="Dims the picture toward black — lower = darker, moodier."><label>opacity</label><input type="range" id="gm-opacity" min="20" max="100" step="1" value="100"><output>100</output></div>
+          <button class="ghost small" id="btn-motion-preview" title="Render a short moving clip with these settings.">▶ Preview motion</button>
+        </div>
+        <div class="gm-preview">
+          <video id="motion-preview-vid" class="motion-preview" muted loop playsinline></video>
+          <div class="gm-preview-hint" id="gm-preview-hint">Preview plays a moving clip using your latest sample image (generate a sample first for the best preview). It shows the drift completing and holding — the real per-page look.</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="board-tools">
+      <span id="board-summary" class="muted"></span>
+      <span class="spacer"></span>
+      <button class="ghost" id="btn-expand-motion">show all motion controls</button>
+      <button class="ghost" id="btn-generate">generate images only</button>
+      <button class="primary" id="btn-all">✨ Generate all &amp; build video →</button>
+    </div>
+    <div class="board" id="board"></div>
+  </section>
+
+  <!-- STEP 3 — GENERATE -->
+  <section class="step hidden" id="step-generate">
+    <div class="step-head"><span class="num">iv</span><h2>Generating</h2></div>
+    <p class="hint" id="gen-hint">Drawing each shot in order. Copilot shots wait a few seconds between calls
+      on purpose — that's the throttle that keeps your account happy.</p>
+    <div class="pbar"><div class="pbar-fill" id="gen-fill"></div><div class="pbar-label" id="gen-label">0%</div></div>
+    <div class="err" id="gen-err"></div>
+    <details class="buildlog" id="buildlog" open>
+      <summary>Build log <span class="muted" id="log-count"></span></summary>
+      <div class="log" id="log-lines"></div>
+    </details>
+    <div class="board-tools" style="margin-top:18px">
+      <span class="spacer"></span>
+      <button class="primary" id="btn-to-assemble" disabled>Stitch the video →</button>
+    </div>
+  </section>
+
+  <!-- STEP 4 — ASSEMBLE -->
+  <section class="step hidden" id="step-assemble">
+    <div class="step-head"><span class="num">v</span><h2>Stitch it together</h2></div>
+    <p class="hint">Each still becomes a slow Ken Burns clip the exact length of its narration slice, then they're
+      joined and the MP3 is laid underneath with chapter bookmarks baked in — the same chapters Parroty made.</p>
+    <div class="pbar"><div class="pbar-fill" id="asm-fill"></div><div class="pbar-label" id="asm-label">ready</div></div>
+    <div class="err" id="asm-err"></div>
+    <div class="results hidden" id="results">
+      <h3 id="results-title">Your video is ready 🎬</h3>
+      <div id="dl-links"></div>
+      <video class="preview" id="video-preview" controls preload="metadata"></video>
+      <h4 class="restable-title">Scene breakdown</h4>
+      <div class="restable-wrap">
+        <table class="restable" id="restable">
+          <thead><tr><th>#</th><th>Chapter</th><th>Start–End</th><th>Source</th><th>Status</th></tr></thead>
+          <tbody id="restable-body"></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  Made beside <a href="https://github.com/pgotta/Parroty" target="_blank" rel="noopener">Parroty</a> · runs entirely on your machine · nothing leaves this computer except, if you choose it, the prompts sent to Copilot.
+</footer>
+
+<script>
+  window.SEESTORY = {
+    presets: {{ presets|tojson }},
+    styles: {{ styles|tojson }},
+    defaultMotion: {{ default_motion|tojson }},
+    probe: {{ probe|tojson }}
+  };
+</script>
+<script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>

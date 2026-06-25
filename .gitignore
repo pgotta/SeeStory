@@ -1,0 +1,20 @@
+# Python
+venv/
+__pycache__/
+*.pyc
+
+# Runtime / generated
+seestory.log
+output/*
+!output/.gitkeep
+uploads/*
+!uploads/.gitkeep
+
+# Copilot sign-in session (never commit credentials)
+session/
+
+# Optional Copilot library — not committed; add it locally (see BUILD.md)
+Windows-Copilot-API/
+
+# Windows launchers are generated locally — see BUILD.md
+*.bat
