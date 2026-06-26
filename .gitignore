@@ -18,3 +18,7 @@ Windows-Copilot-API/
 
 # Windows launchers are generated locally — see BUILD.md
 *.bat
+screenshots/header.png
+screenshots/setup-photoreal.png
+screenshots/storyboard.png
+screenshots/style-storybook.png
