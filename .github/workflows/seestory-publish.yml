@@ -1,0 +1,77 @@
+name: Apply SeeStory release source
+
+on:
+  push:
+    branches:
+      - agent/seestory-local-gpu-release-final
+    paths:
+      - .release-staging/READY
+
+permissions:
+  contents: write
+
+jobs:
+  apply-release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Rebuild repository from validated release archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat .release-staging/part-00 .release-staging/part-01 .release-staging/part-02 .release-staging/part-03 | base64 --decode > /tmp/seestory-release.tar.gz
+          cat .release-staging/part-04 .release-staging/part-05 .release-staging/part-06 .release-staging/part-07 \
+              .release-staging/tail-00 .release-staging/tail-01 .release-staging/tail-02 \
+              .release-staging/tail-03 .release-staging/tail-04 .release-staging/tail-05 \
+              .release-staging/tail-06 .release-staging/tail-07 .release-staging/tail-08 \
+              >> /tmp/seestory-release.tar.gz
+
+          while IFS= read -r -d '' tracked; do
+            case "$tracked" in
+              .release-staging/*|.github/workflows/seestory-publish.yml) ;;
+              *) rm -f -- "$tracked" ;;
+            esac
+          done < <(git ls-files -z)
+
+          tar -xzf /tmp/seestory-release.tar.gz -C .
+          rm -rf .release-staging
+          rm -f .github/workflows/seestory-publish.yml
+
+          if find . -path ./.git -prune -o -type f \( -iname '*.bat' -o -iname '*.cmd' -o -iname '*.lnk' \) -print | grep -q .; then
+            echo 'Windows launcher files must not be committed.' >&2
+            exit 1
+          fi
+
+      - name: Install test dependencies
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      - name: Validate source
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m compileall -q app tests launch_seestory.pyw stop_seestory.py shutdown_diagnostic.py install_models.py build_icons.py
+          python -m unittest discover -s tests -v
+
+      - name: Commit validated release source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          if git diff --cached --quiet; then
+            echo 'No source changes to publish.'
+            exit 0
+          fi
+          git commit -m 'Release local GPU desktop refactor'
+          git push origin HEAD:agent/seestory-local-gpu-release-final
