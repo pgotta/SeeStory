@@ -89,6 +89,7 @@ This release turns SeeStory into a local-only Windows desktop-style application,
 - Python source compilation completed successfully.
 - JavaScript syntax validation completed successfully.
 - Unit and regression tests completed successfully.
+- GitHub Actions release-branch validation completed successfully.
 - Every packaged BAT file exactly matches its corresponding code block in `BUILD.md`.
 - Release-hygiene checks confirm the retired provider name is absent and BAT files remain ignored.
 - ZIP integrity and packaged file checks completed successfully.
