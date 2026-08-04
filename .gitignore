@@ -1,25 +1,31 @@
 # Python
 venv/
+.venv/
 __pycache__/
-*.pyc
+*.py[cod]
 
 # Runtime / generated
+logs/
+runtime/
 seestory.log
+SeeStory-shutdown-diagnostic-*.txt
 output/*
 !output/.gitkeep
 uploads/*
 !uploads/.gitkeep
 
-# Copilot sign-in session (never commit credentials)
-session/
-
-# Optional Copilot library — not committed; add it locally (see BUILD.md)
-Windows-Copilot-API/
-
-# Windows launchers are generated locally — see BUILD.md
+# Local Windows launchers and shortcuts (documented in BUILD.md)
 *.bat
-screenshots/header.png
-screenshots/setup-photoreal.png
-screenshots/storyboard.png
-screenshots/style-storybook.png
-screenshots/header.png
+*.cmd
+*.lnk
+
+# Local model/download caches
+.cache/
+models/
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini

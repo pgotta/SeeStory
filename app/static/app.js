@@ -8,7 +8,6 @@ const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const CFG = window.SEESTORY;
 
 let PROJECT = null;          // the live project object from the server
-let MODE = "both";
 
 /* ── tiny helpers ──────────────────────────────────────────────────────── */
 function fmtMs(ms) {
@@ -29,8 +28,15 @@ function fmtWhen(sec) {
 }
 function show(id) { $("#" + id).classList.remove("hidden"); }
 function hide(id) { $("#" + id).classList.add("hidden"); }
+function escapeHtml(value) {
+  return String(value ?? "").replace(/[&<>"']/g, ch => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+  })[ch]);
+}
+function jobPart() { return encodeURIComponent(PROJECT?.job || ""); }
 function imgUrl(path, bust) {
-  return `/image/${PROJECT.job}/${path}` + (bust ? `?t=${bust}` : "");
+  const safePath = String(path || "").split("/").map(encodeURIComponent).join("/");
+  return `/image/${jobPart()}/${safePath}` + (bust ? `?t=${encodeURIComponent(bust)}` : "");
 }
 
 /* build/error log shared by the generate + assemble steps */
@@ -71,7 +77,12 @@ async function readSSE(resp, onEvent) {
     while ((i = buf.indexOf("\n\n")) >= 0) {
       const chunk = buf.slice(0, i); buf = buf.slice(i + 2);
       const line = chunk.split("\n").find(l => l.startsWith("data:"));
-      if (line) { try { onEvent(JSON.parse(line.slice(5).trim())); } catch {} }
+      if (line) {
+        let event;
+        try { event = JSON.parse(line.slice(5).trim()); }
+        catch { continue; }
+        onEvent(event);
+      }
     }
   }
 }
@@ -139,13 +150,13 @@ async function checkPages() {
   }
 }
 
-/* sample image preview (Stable Diffusion) */
+/* sample image preview */
 async function generateSample() {
   if (!files.ebook) { $("#sample-hint").textContent = "Add the ebook above first."; return; }
   show("sample-panel");
   const wrap = $("#sample-imgwrap");
   wrap.innerHTML = `<div class="spin"></div>`;
-  $("#sample-meta").textContent = "Generating… (first run loads the model)";
+  $("#sample-meta").textContent = "Generating sample…";
   $("#sample-page").textContent = ""; $("#sample-prompt").textContent = "";
   try {
     const fd = new FormData();
@@ -156,15 +167,12 @@ async function generateSample() {
     const r = await fetch("/api/sample", { method: "POST", body: fd });
     const d = await r.json();
     if (!r.ok) throw new Error(d.error || "Sample failed.");
-    const src = d.backend_used === "stablediffusion" ? "Stable Diffusion"
-              : d.backend_used === "copilot" ? "Copilot" : "placeholder";
-    wrap.innerHTML = `<img src="${d.image_url}?t=${Date.now()}" alt="">`;
-    $("#sample-meta").innerHTML =
-      `<b>${d.chapter_title}</b> · ~page ${d.page_no} · <span class="tbk ${d.backend_used}">${src}</span>`;
+    wrap.innerHTML = `<img src="${escapeHtml(d.image_url)}?t=${Date.now()}" alt="">`;
+    $("#sample-meta").innerHTML = `<b>${escapeHtml(d.chapter_title)}</b> · ~page ${Number(d.page_no) || 1}`;
     $("#sample-page").textContent = d.page_text;
     $("#sample-prompt").textContent = "Prompt: " + d.prompt;
   } catch (e) {
-    wrap.innerHTML = `<span class="empty">${e.message}</span>`;
+    wrap.innerHTML = `<span class="empty">${escapeHtml(e.message)}</span>`;
     $("#sample-meta").textContent = "";
   }
 }
@@ -177,14 +185,6 @@ function refreshIngestBtn() {
 }
 refreshIngestBtn();
 
-$$("#mode-cards .mode-card").forEach(card => card.addEventListener("click", () => {
-  $$("#mode-cards .mode-card").forEach(c => c.classList.remove("sel"));
-  card.classList.add("sel");
-  MODE = card.dataset.mode;
-  const copOff = MODE === "sd_only";
-  $("#cop-every-wrap").style.opacity = copOff ? .4 : 1;
-  $("#cop-cap-wrap").style.opacity = copOff ? .4 : 1;
-}));
 
 $("#btn-ingest").addEventListener("click", async () => {
   const btn = $("#btn-ingest");
@@ -197,15 +197,14 @@ $("#btn-ingest").addEventListener("click", async () => {
   fd.append("audio", files.audio);
   if (files.ts) fd.append("timestamps", files.ts);
   fd.append("timestamps_text", $("#ts-paste").value);
-  fd.append("mode", MODE);
   fd.append("page_basis", PAGE_BASIS);
   fd.append("page_count", PAGE_COUNT);
   fd.append("motion", JSON.stringify(getGlobalMotion()));
   if (files.cover) fd.append("cover", files.cover);
   if (files.subtitle) fd.append("subtitle", files.subtitle);
   fd.append("subtitle_mode", $("#subtitle_mode").value);
-  ["words_per_page", "pages_per_shot", "style_key", "custom_style",
-   "copilot_every_pages", "copilot_cap", "sd_guidance"].forEach(k => fd.append(k, $("#" + k).value));
+  ["words_per_page", "pages_per_shot", "style_key", "custom_style"]
+    .forEach(k => fd.append(k, $("#" + k).value));
 
   let project = null, ingestErr = null;
   try {
@@ -299,8 +298,6 @@ $("#btn-motion-preview").addEventListener("click", async () => {
 });
 
 /* ── STEP 2 · storyboard ───────────────────────────────────────────────── */
-const BACKENDS = [["stablediffusion", "SD"], ["copilot", "Copilot"], ["placeholder", "Plain"]];
-
 function motionControls(shot) {
   const m = Object.assign({}, CFG.defaultMotion, shot.motion || {});
   const TIPS = {
@@ -338,8 +335,7 @@ function motionControls(shot) {
 
 function shotCard(shot) {
   const el = document.createElement("div");
-  el.className = "shot" + (shot.is_chapter_start ? " chapter-start" : "") +
-                 (shot.backend === "copilot" ? " is-copilot" : "");
+  el.className = "shot" + (shot.is_chapter_start ? " chapter-start" : "");
   el.dataset.id = shot.id;
   const thumb = shot.image_path
     ? `<img src="${imgUrl(shot.image_path, shot.cache_bust || 1)}" alt="">`
@@ -348,16 +344,10 @@ function shotCard(shot) {
     <div class="thumb">
       ${thumb}
       <span class="ttime">${fmtMs(shot.start_ms)}–${fmtMs(shot.end_ms)}</span>
-      <span class="tbk ${shot.backend}">${shot.backend === "stablediffusion" ? "SD" : shot.backend}</span>
     </div>
     <div class="shot-body">
-      <div class="shot-chap">${shot.chapter_title} · shot ${shot.shot_in_chapter + 1}${shot.highlighted ? " · ★ highlight" : ""}</div>
-      <textarea class="shot-prompt" spellcheck="false">${shot.prompt || ""}</textarea>
-      <div class="row">
-        <div class="seg" data-seg="backend">
-          ${BACKENDS.map(([v, t]) => `<button data-v="${v}" class="${shot.backend === v ? "on" : ""}">${t}</button>`).join("")}
-        </div>
-      </div>
+      <div class="shot-chap">${escapeHtml(shot.chapter_title)} · shot ${shot.shot_in_chapter + 1}</div>
+      <textarea class="shot-prompt" spellcheck="false">${escapeHtml(shot.prompt || "")}</textarea>
       ${motionControls(shot)}
       <div class="shot-actions">
         <button class="ghost btn-regen">Regenerate</button>
@@ -370,26 +360,12 @@ function shotCard(shot) {
 
 function wireShot(el, shot) {
   const id = shot.id;
-  // prompt save on blur
   const ta = $(".shot-prompt", el);
   ta.addEventListener("blur", () => saveShot(id, { prompt: ta.value }));
-  // backend segmented control
-  $$(".seg[data-seg=backend] button", el).forEach(b => b.addEventListener("click", () => {
-    $$(".seg[data-seg=backend] button", el).forEach(x => x.classList.remove("on"));
-    b.classList.add("on");
-    const v = b.dataset.v;
-    findShot(id).backend = v;
-    const badge = $(".tbk", el);
-    badge.className = "tbk " + v; badge.textContent = v === "stablediffusion" ? "SD" : v;
-    el.classList.toggle("is-copilot", v === "copilot");
-    saveShot(id, { backend: v });
-  }));
-  // motion toggle
   $(".m-toggle", el).addEventListener("click", () => {
     const m = $(".motion", el); m.classList.toggle("open");
     $(".m-toggle", el).textContent = (m.classList.contains("open") ? "▾" : "▸") + " motion";
   });
-  // motion inputs
   $$(".motion [data-m]", el).forEach(inp => {
     const out = inp.parentElement.querySelector("output");
     inp.addEventListener("input", () => { if (out) out.textContent = inp.value; });
@@ -435,7 +411,7 @@ function findShot(id) { return PROJECT.shots.find(s => s.id === id); }
 
 async function saveShot(id, patch) {
   try {
-    await fetch(`/api/project/${PROJECT.job}/shot/${id}`, {
+    await fetch(`/api/project/${jobPart()}/shot/${encodeURIComponent(id)}`, {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify(patch)
     });
@@ -447,25 +423,23 @@ async function regen(el, id) {
   thumb.innerHTML = `<div class="spin"></div>` +
     `<span class="ttime">${fmtMs(findShot(id).start_ms)}–${fmtMs(findShot(id).end_ms)}</span>`;
   try {
-    const r = await fetch(`/api/project/${PROJECT.job}/shot/${id}/regenerate`, { method: "POST" });
+    const r = await fetch(`/api/project/${jobPart()}/shot/${encodeURIComponent(id)}/regenerate`, { method: "POST" });
     const rec = await r.json();
+    if (!r.ok) throw new Error(rec.error || "Regenerate failed.");
     Object.assign(findShot(id), rec);
     thumb.innerHTML =
       `<img src="${imgUrl(rec.image_path, rec.cache_bust)}" alt="">` +
-      `<span class="ttime">${fmtMs(rec.start_ms)}–${fmtMs(rec.end_ms)}</span>` +
-      `<span class="tbk ${rec.backend_used || rec.backend}">${(rec.backend_used || rec.backend) === "stablediffusion" ? "SD" : (rec.backend_used || rec.backend)}</span>`;
-    if (rec.backend === "copilot" && rec.backend_used && rec.backend_used !== "copilot") {
-      toast(rec.note || rec.error || `Copilot unavailable — used ${rec.backend_used} instead.`, "warn");
-    }
+      `<span class="ttime">${fmtMs(rec.start_ms)}–${fmtMs(rec.end_ms)}</span>`;
   } catch (e) {
-    thumb.innerHTML = `<span class="empty">regenerate failed</span>`;
+    thumb.innerHTML = `<span class="empty">${escapeHtml(e.message || "regenerate failed")}</span>`;
+    toast(e.message || "Regenerate failed.", "warn");
   }
 }
 
 async function del(el, id) {
   if (!confirm("Delete this shot? Its on-screen time is handed to the shot before it.")) return;
   try {
-    const r = await fetch(`/api/project/${PROJECT.job}/shot/${id}/delete`, { method: "POST" });
+    const r = await fetch(`/api/project/${jobPart()}/shot/${encodeURIComponent(id)}/delete`, { method: "POST" });
     const data = await r.json();
     if (data.shots) PROJECT.shots = data.shots;
     el.remove();
@@ -490,9 +464,8 @@ function renderBoard() {
 }
 function updateBoardSummary() {
   const n = PROJECT.shots.length;
-  const cop = PROJECT.shots.filter(s => s.backend === "copilot").length;
   const dur = PROJECT.total_ms;
-  let s = `${n} shots · ${cop} premium (Copilot) · ${fmtMs(dur)} runtime`;
+  let s = `${n} shots · ${fmtMs(dur)} runtime`;
   const a = PROJECT.alignment;
   if (a) {
     s += ` · aligned to your chapter list`;
@@ -516,7 +489,7 @@ $("#btn-apply-motion-all").addEventListener("click", () => {
       }
     });
   });
-  fetch(`/api/project/${PROJECT.job}/motion_all`, {
+  fetch(`/api/project/${jobPart()}/motion_all`, {
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ motion: m })
   }).catch(() => {});
@@ -548,39 +521,50 @@ async function runGenerate() {
   logLine(`Generating ${PROJECT.shots.length} shots…`);
   let completed = false;
   try {
-    const r = await fetch(`/api/project/${PROJECT.job}/generate`, { method: "POST" });
+    const r = await fetch(`/api/project/${jobPart()}/generate`, { method: "POST" });
     let total = PROJECT.shots.length;
     await readSSE(r, ev => {
       if (ev.type === "start") { total = ev.total || total; logLine(`${ev.total} to draw, ${ev.already || 0} already done.`); }
-      else if (ev.type === "info") { logLine(ev.message || "", "warn"); }
       else if (ev.type === "shot") {
         const pct = Math.round((ev.done / Math.max(1, ev.total)) * 100);
         $("#gen-fill").style.width = pct + "%";
-        $("#gen-label").textContent = `${pct}% · ${ev.done}/${ev.total}` +
-          (ev.backend_used ? ` · ${ev.backend_used}` : "");
+        $("#gen-label").textContent = `${pct}% · ${ev.done}/${ev.total}`;
         const failed = ev.status === "error";
-        const note = ev.note && ev.note !== "error" ? ` (${ev.note})` : "";
-        logLine(`Shot ${ev.id}: ${failed ? "FAILED — " + (ev.error || "") : (ev.backend_used || "done") + note}`,
-                failed ? "err" : (ev.note && ev.note !== "error" ? "warn" : ""));
+        logLine(`Shot ${ev.id}: ${failed ? "FAILED — " + (ev.error || "") : "done"}`,
+                failed ? "err" : "");
         const el = $(`#board .shot[data-id="${ev.id}"]`);
         const rec = findShot(ev.id);
         if (el && rec) {
-          rec.image_path = `images/${ev.id}.jpg`;
           rec.cache_bust = ev.cache_bust;
-          rec.backend_used = ev.backend_used;
           rec.status = ev.status;
-          const used = ev.backend_used || rec.backend;
-          $(".thumb", el).innerHTML =
-            `<img src="${imgUrl(rec.image_path, ev.cache_bust)}" alt="">` +
-            `<span class="ttime">${fmtMs(rec.start_ms)}–${fmtMs(rec.end_ms)}</span>` +
-            `<span class="tbk ${used}">${used === "stablediffusion" ? "SD" : used}</span>`;
+          rec.image_path = failed ? null : `images/${ev.id}.jpg`;
+          if (!failed) {
+            $(".thumb", el).innerHTML =
+              `<img src="${imgUrl(rec.image_path, ev.cache_bust)}" alt="">` +
+              `<span class="ttime">${fmtMs(rec.start_ms)}–${fmtMs(rec.end_ms)}</span>`;
+          } else {
+            $(".thumb", el).innerHTML =
+              `<span class="empty">generation failed</span>` +
+              `<span class="ttime">${fmtMs(rec.start_ms)}–${fmtMs(rec.end_ms)}</span>`;
+          }
         }
+      } else if (ev.type === "error") {
+        throw new Error(ev.message || "Generation stopped.");
       } else if (ev.type === "complete") {
         $("#gen-fill").style.width = "100%";
-        $("#gen-label").textContent = "all shots drawn";
-        $("#btn-to-assemble").disabled = false;
-        logLine("All shots drawn. Ready to stitch.", "ok");
-        completed = true;
+        const failed = Number(ev.failed || 0);
+        if (failed) {
+          $("#gen-label").textContent = `${failed} shot${failed === 1 ? "" : "s"} need attention`;
+          $("#gen-err").textContent = `${failed} image${failed === 1 ? "" : "s"} failed. Regenerate the failed shot(s), then run Generate again.`;
+          $("#btn-to-assemble").disabled = true;
+          logLine(`${failed} shot(s) failed; video assembly is blocked until every image exists.`, "err");
+          completed = false;
+        } else {
+          $("#gen-label").textContent = "all shots drawn";
+          $("#btn-to-assemble").disabled = false;
+          logLine("All shots drawn. Ready to stitch.", "ok");
+          completed = true;
+        }
       }
     });
   } catch (e) {
@@ -614,7 +598,7 @@ async function runAssemble() {
   $("#asm-err").textContent = ""; hide("results");
   logLine("Stitching: rendering Ken Burns clips…");
   try {
-    const r = await fetch(`/api/project/${PROJECT.job}/assemble`, { method: "POST" });
+    const r = await fetch(`/api/project/${jobPart()}/assemble`, { method: "POST" });
     await readSSE(r, ev => {
       if (ev.type === "start") { $("#asm-label").textContent = `rendering ${ev.total} clips…`; logLine(`${ev.total} clips to render.`); }
       else if (ev.type === "clip") {
@@ -640,30 +624,28 @@ async function runAssemble() {
 }
 
 function showResults(ev) {
-  const job = PROJECT.job;
+  const job = jobPart();
+  const encFile = name => String(name || "").split("/").map(encodeURIComponent).join("/");
   const links = [];
-  links.push(`<a class="dl" href="/download/${job}/${ev.video}" download>⬇ Download MP4</a>`);
+  links.push(`<a class="dl" href="/download/${job}/${encFile(ev.video)}" download>⬇ Download MP4</a>`);
   if (ev.timestamps_file)
-    links.push(`<a class="dl alt" href="/download/${job}/${ev.timestamps_file}" download>YouTube chapters .txt</a>`);
+    links.push(`<a class="dl alt" href="/download/${job}/${encFile(ev.timestamps_file)}" download>YouTube chapters .txt</a>`);
   if (ev.drive_file)
-    links.push(`<a class="dl alt" href="/download/${job}/${ev.drive_file}" download>Google Drive chapter page</a>`);
+    links.push(`<a class="dl alt" href="/download/${job}/${encFile(ev.drive_file)}" download>Google Drive chapter page</a>`);
   if (ev.subtitle_file)
-    links.push(`<a class="dl alt" href="/download/${job}/${ev.subtitle_file}" download>Subtitles (.srt)${ev.subtitle_mode === "burn" ? " · also burned in" : ""}</a>`);
+    links.push(`<a class="dl alt" href="/download/${job}/${encFile(ev.subtitle_file)}" download>Subtitles (.srt)${ev.subtitle_mode === "burn" ? " · also burned in" : ""}</a>`);
   $("#dl-links").innerHTML = links.join("");
-  $("#video-preview").src = `/image/${job}/${ev.video}`;
+  $("#video-preview").src = `/image/${job}/${encFile(ev.video)}`;
 
-  // scene breakdown table (like Parroty's results table)
-  const rows = PROJECT.shots.map((s, i) => {
-    const used = s.backend_used || s.backend;
-    const srcLabel = used === "stablediffusion" ? "Stable Diffusion"
-                   : used === "copilot" ? "Copilot" : "placeholder";
-    const ok = s.status !== "error";
+  const rows = PROJECT.shots.map((shot, i) => {
+    const ok = shot.status !== "error";
+    const title = escapeHtml(shot.chapter_title);
+    const status = ok ? "✓ done" : `✕ ${escapeHtml(shot.error || "error")}`;
     return `<tr>
       <td>${i + 1}</td>
-      <td>${s.chapter_title}${s.is_chapter_start ? ' <span class="chip">ch start</span>' : ""}</td>
-      <td>${fmtMs(s.start_ms)}–${fmtMs(s.end_ms)}</td>
-      <td><span class="tbk ${used}">${srcLabel}</span></td>
-      <td class="${ok ? "ok" : "err"}">${ok ? "✓ done" : "✕ " + (s.error || "error")}</td>
+      <td>${title}${shot.is_chapter_start ? ' <span class="chip">ch start</span>' : ""}</td>
+      <td>${fmtMs(shot.start_ms)}–${fmtMs(shot.end_ms)}</td>
+      <td class="${ok ? "ok" : "err"}">${status}</td>
     </tr>`;
   }).join("");
   $("#restable-body").innerHTML = rows;
@@ -683,8 +665,8 @@ async function loadResume() {
         : (p.done >= p.shots && p.shots) ? "all images ready"
         : `${p.done}/${p.shots} images drawn`;
       const when = fmtWhen(p.modified);
-      return `<div class="resume-item" data-job="${p.job}">
-        <div class="ri-main"><b>${p.title || "Audiobook"}</b>
+      return `<div class="resume-item" data-job="${escapeHtml(p.job)}">
+        <div class="ri-main"><b>${escapeHtml(p.title || "Audiobook")}</b>
           <span class="ri-meta">${when ? when + " · " : ""}${fmtMs(p.total_ms)} · ${status}</span></div>
         <div class="ri-actions">
           <button class="primary small ri-go">Resume →</button>
@@ -711,7 +693,7 @@ async function loadResume() {
 
 async function resumeProject(job) {
   try {
-    const p = await (await fetch(`/api/project/${job}`)).json();
+    const p = await (await fetch(`/api/project/${encodeURIComponent(job)}`)).json();
     if (!p || p.error) throw new Error("Couldn't load that session.");
     PROJECT = p;
     renderBoard();
@@ -729,25 +711,6 @@ async function resumeProject(job) {
 }
 
 $("#resume-dismiss").addEventListener("click", () => hide("resume-bar"));
-$("#btn-test-copilot")?.addEventListener("click", async () => {
-  const btn = $("#btn-test-copilot"), out = $("#copilot-test-result");
-  const orig = btn.textContent;
-  btn.disabled = true; btn.textContent = "Testing… (a few seconds)";
-  out.textContent = ""; out.className = "ctest-result";
-  try {
-    const r = await fetch("/api/copilot_test", { method: "POST" });
-    const d = await r.json();
-    out.textContent = (d.ok ? "✓ " : "✗ ") + d.detail;
-    out.className = "ctest-result " + (d.ok ? "ok" : "warn");
-    toast(d.detail, d.ok ? "" : "warn");
-    if (!d.ok) $("#copilot-help").classList.remove("hidden");
-  } catch {
-    out.textContent = "✗ Test couldn't run."; out.className = "ctest-result warn";
-  }
-  btn.disabled = false; btn.textContent = orig;
-});
-$("#copilot-help-toggle")?.addEventListener("click", () =>
-  $("#copilot-help").classList.toggle("hidden"));
 $("#resume-clear")?.addEventListener("click", async () => {
   if (!confirm("Clear ALL recent sessions? This permanently deletes their images and any built videos from disk.")) return;
   try {
@@ -757,3 +720,42 @@ $("#resume-clear")?.addEventListener("click", async () => {
   } catch { toast("Couldn't clear sessions.", "warn"); }
 });
 loadResume();
+
+
+/* ── SeeStory Windows desktop lifecycle + system monitor ------------------ */
+(() => {
+  const heartbeat = () => fetch("/api/desktop/heartbeat", {
+    method: "POST", cache: "no-store", keepalive: true,
+  }).catch(() => {});
+  heartbeat();
+  window.setInterval(heartbeat, 2500);
+
+  const pct = value => value == null ? "—" : `${Math.round(value)}%`;
+  const num = (value, digits = 1) => value == null ? "—" : Number(value).toFixed(digits);
+
+  async function refreshSystemMonitor() {
+    const panel = document.getElementById("system-monitor");
+    if (!panel) return;
+    try {
+      const data = await (await fetch("/api/system", { cache: "no-store" })).json();
+      const gpu = data.gpu || {};
+      document.getElementById("sm-cpu").textContent = pct(data.cpu_percent);
+      document.getElementById("sm-ram").textContent =
+        data.ram_used_gb == null ? "—" : `${num(data.ram_used_gb)}/${num(data.ram_total_gb)} GB`;
+      document.getElementById("sm-gpu").textContent = gpu.available ? pct(gpu.util) : "not detected";
+      document.getElementById("sm-vram").textContent = gpu.available
+        ? `${Math.round(gpu.memory_used_mb)}/${Math.round(gpu.memory_total_mb)} MB`
+        : "—";
+      document.getElementById("sm-temp").textContent = gpu.available
+        ? `${Math.round(gpu.temperature_c)}°C`
+        : "—";
+      panel.classList.toggle("gpu-active", Boolean(gpu.available && gpu.util >= 5));
+      panel.classList.remove("offline");
+    } catch {
+      panel.classList.add("offline");
+    }
+  }
+
+  refreshSystemMonitor();
+  window.setInterval(refreshSystemMonitor, 2500);
+})();

@@ -24,7 +24,7 @@ def _no_window_kwargs():
 
 def ensure_ffmpeg() -> bool:
     try:
-        subprocess.run(["ffmpeg", "-version"], capture_output=True, check=True)
+        subprocess.run(["ffmpeg", "-version"], capture_output=True, check=True, **_no_window_kwargs())
         return True
     except (subprocess.CalledProcessError, FileNotFoundError):
         return False
@@ -69,8 +69,12 @@ def assemble_video(clip_paths: list, audio_path: str, out_path: str,
     work = os.path.dirname(out_path)
     list_file = os.path.join(work, "_concat.txt")
     with open(list_file, "w", encoding="utf-8") as f:
-        for p in clip_paths:
-            f.write(f"file '{os.path.abspath(p)}'\n")
+        for clip_path in clip_paths:
+            # ffconcat accepts forward slashes on Windows. Escape apostrophes so
+            # projects also work from paths such as C:/Users/O'Brien/....
+            abs_path = os.path.abspath(clip_path).replace("\\", "/")
+            quoted = abs_path.replace("'", "'\\''")
+            f.write(f"file '{quoted}'\n")
 
     meta_file = None
     if markers and total_ms:

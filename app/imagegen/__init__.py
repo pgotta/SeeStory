@@ -1,65 +1,35 @@
-"""Image-generation router: pick a backend per shot, fall back gracefully."""
+"""Local image-generation entry point.
+
+SeeStory intentionally has one image path: local diffusion generation. The UI
+does not expose implementation choices, and generation failures are surfaced
+instead of silently substituting different artwork.
+"""
 
 import sys
 
-from . import placeholder, stablediffusion, copilot_backend
+from . import stablediffusion
 from ..director import _scrub
-
-# fallback order if a backend is unavailable or errors on a given shot
-_FALLBACK = {
-    "copilot": ["copilot", "stablediffusion", "placeholder"],
-    "stablediffusion": ["stablediffusion", "placeholder"],
-    "placeholder": ["placeholder"],
-}
-
-_LABEL = {"copilot": "copilot", "stablediffusion": "stable diffusion",
-          "placeholder": "placeholder"}
 
 
 def probe() -> dict:
+    """Small readiness snapshot used by the launcher and diagnostics."""
     return {
-        "stablediffusion": stablediffusion.is_available(),
+        "ready": stablediffusion.is_available(),
         "cuda": stablediffusion.has_cuda(),
-        "copilot": copilot_backend.is_available(),
-        "copilot_signed_in": copilot_backend.is_signed_in(),
-        "copilot_remaining": copilot_backend.remaining(),
+        "model": stablediffusion.DEFAULT_MODEL,
     }
 
 
-def generate_for(shot, out_path: str, *, sd_opts: dict = None) -> dict:
-    """Generate one shot's image. Returns {'backend': used, 'note': str}."""
+def generate_for(shot, out_path: str, *, sd_opts: dict | None = None) -> str:
+    """Generate one storyboard image locally and return its output path."""
     sd_opts = sd_opts or {}
-    # Scrub text-inducing / filter-tripping tokens even from already-stored
-    # prompts (e.g. an old storyboard built with a "…dan brown book" style),
-    # so regenerating a shot benefits from the fix too.
-    prompt = _scrub(shot.prompt) or shot.prompt
-    chain = _FALLBACK.get(shot.backend, ["placeholder"])
-    last_err = ""
-    for backend in chain:
-        try:
-            if backend == "copilot":
-                copilot_backend.generate(prompt, out_path)
-            elif backend == "stablediffusion":
-                stablediffusion.generate(prompt, out_path, **sd_opts)
-            else:
-                placeholder.generate(prompt, out_path,
-                                     label=_LABEL.get(shot.backend, "scene"))
-            note = "" if backend == shot.backend else \
-                f"{shot.backend} unavailable → {backend}"
-            # carry the real reason so it's visible in the browser build log
-            if note and last_err:
-                note += f" — {last_err}"
-            return {"backend": backend, "note": note, "error": last_err}
-        except Exception as e:
-            last_err = str(e)
-            # Surface the reason on the console (→ seestory.log) so a backend
-            # silently falling back (e.g. Copilot) is never invisible again.
-            sys.stderr.write(
-                f"[seestory] {backend} failed for shot "
-                f"{getattr(shot, 'id', '?')}: {e}\n")
-            sys.stderr.flush()
-            continue
-    # placeholder is last resort and shouldn't fail, but just in case:
-    placeholder.generate(shot.prompt or "scene", out_path)
-    return {"backend": "placeholder", "note": "all backends failed",
-            "error": last_err}
+    prompt = _scrub(getattr(shot, "prompt", "")) or getattr(shot, "prompt", "")
+    try:
+        return stablediffusion.generate(prompt, out_path, **sd_opts)
+    except Exception as exc:
+        sys.stderr.write(
+            f"[seestory] local image generation failed for shot "
+            f"{getattr(shot, 'id', '?')}: {exc}\n"
+        )
+        sys.stderr.flush()
+        raise

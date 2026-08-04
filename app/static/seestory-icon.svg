@@ -1,0 +1,58 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="SeeStory">
+  <defs>
+    <linearGradient id="bg" x1="70" y1="42" x2="438" y2="476" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#2b2118"/>
+      <stop offset="0.48" stop-color="#15110f"/>
+      <stop offset="1" stop-color="#08090b"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0" cy="0" r="1" gradientTransform="translate(256 230) rotate(90) scale(205)" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#f8c46f" stop-opacity=".48"/>
+      <stop offset=".55" stop-color="#d98a2c" stop-opacity=".12"/>
+      <stop offset="1" stop-color="#d98a2c" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="page" x1="154" y1="290" x2="256" y2="407" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#fff5da"/>
+      <stop offset="1" stop-color="#caa568"/>
+    </linearGradient>
+    <linearGradient id="page2" x1="356" y1="290" x2="256" y2="407" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#fff8e6"/>
+      <stop offset="1" stop-color="#b98747"/>
+    </linearGradient>
+    <filter id="shadow" x="-30%" y="-30%" width="160%" height="170%">
+      <feDropShadow dx="0" dy="18" stdDeviation="18" flood-color="#000" flood-opacity=".58"/>
+    </filter>
+    <filter id="soft" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="12"/>
+    </filter>
+  </defs>
+  <rect x="22" y="22" width="468" height="468" rx="108" fill="url(#bg)"/>
+  <rect x="31" y="31" width="450" height="450" rx="99" fill="none" stroke="#f0ad4f" stroke-width="8" stroke-opacity=".75"/>
+  <circle cx="256" cy="226" r="194" fill="url(#glow)"/>
+  <ellipse cx="256" cy="402" rx="145" ry="29" fill="#000" opacity=".45" filter="url(#soft)"/>
+
+  <g filter="url(#shadow)">
+    <path d="M256 190c-70-58-140-49-140-49v160c54-6 100 12 140 48V190Z" fill="#20160f" stroke="#df9437" stroke-width="9" stroke-linejoin="round"/>
+    <path d="M256 190c70-58 140-49 140-49v160c-54-6-100 12-140 48V190Z" fill="#1c1510" stroke="#df9437" stroke-width="9" stroke-linejoin="round"/>
+
+    <path d="M256 298c-58-42-116-38-116-38v111c43-2 82 13 116 43V298Z" fill="url(#page)" stroke="#f6d99b" stroke-width="5" stroke-linejoin="round"/>
+    <path d="M256 298c58-42 116-38 116-38v111c-43-2-82 13-116 43V298Z" fill="url(#page2)" stroke="#f6d99b" stroke-width="5" stroke-linejoin="round"/>
+    <path d="M256 299v116" stroke="#78502d" stroke-width="5" opacity=".8"/>
+    <path d="M163 289c27-2 52 5 75 20M163 320c27-2 52 5 75 20M349 289c-27-2-52 5-75 20M349 320c-27-2-52 5-75 20" stroke="#8a613c" stroke-width="7" stroke-linecap="round" opacity=".45"/>
+
+    <path d="M155 158l45 42M357 158l-45 42" stroke="#f0ad4f" stroke-width="13" stroke-linecap="round"/>
+    <ellipse cx="205" cy="227" rx="63" ry="66" fill="#efe4c9" stroke="#d58d32" stroke-width="9"/>
+    <ellipse cx="307" cy="227" rx="63" ry="66" fill="#efe4c9" stroke="#d58d32" stroke-width="9"/>
+    <circle cx="205" cy="230" r="27" fill="#15110f"/>
+    <circle cx="307" cy="230" r="27" fill="#15110f"/>
+    <circle cx="216" cy="218" r="8" fill="#ffc86a"/>
+    <circle cx="318" cy="218" r="8" fill="#ffc86a"/>
+    <path d="M256 254l-25 34h50l-25-34Z" fill="#f0a640" stroke="#8a4e1f" stroke-width="4" stroke-linejoin="round"/>
+  </g>
+
+  <g opacity=".9">
+    <rect x="74" y="81" width="44" height="19" rx="7" fill="#f0ad4f"/>
+    <rect x="394" y="81" width="44" height="19" rx="7" fill="#f0ad4f"/>
+    <rect x="74" y="412" width="44" height="19" rx="7" fill="#f0ad4f"/>
+    <rect x="394" y="412" width="44" height="19" rx="7" fill="#f0ad4f"/>
+  </g>
+</svg>

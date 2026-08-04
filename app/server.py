@@ -3,20 +3,18 @@ SeeStory — turn a Parroty audiobook into a watch-along illustrated video.
 
 Pipeline:  ebook + Parroty MP3 + Parroty timestamps
            -> chapters (same parser as Parroty) mapped onto the audio timeline
-           -> shots (one image/clip each), prompted + routed by the director
-           -> images (Stable Diffusion / Copilot / placeholder)
+           -> shots (one image/clip each), prompted by the director
+           -> local GPU-generated images
            -> Ken Burns motion clips
            -> one chaptered MP4 synced to the narration.
 
 Runs locally at http://127.0.0.1:5001 so it sits beside Parroty (port 5000).
 """
 
-import io
 import json
 import os
 import random
 import sys
-
 import shutil
 import threading
 import time
@@ -35,6 +33,8 @@ from . import imagegen
 from . import assembler as ASM
 from . import pagemap
 from . import subtitles as SUB
+from . import desktop_runtime as DESKTOP
+from . import validation as VALID
 
 COVER_SECONDS = 6.0  # how long the book cover holds at the very start
 
@@ -47,11 +47,26 @@ os.makedirs(UPLOADS, exist_ok=True)
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 5 * 1024 * 1024 * 1024  # 5 GB (long audiobooks)
+# This is a local desktop app that is upgraded in-place. A persistent Chrome/Edge
+# app profile is useful for clean startup, but browser caching must never leave an
+# old HTML/JS interface visible after an upgrade.
+app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 0
+
+
+@app.after_request
+def _disable_ui_cache(response):
+    if request.path == "/" or request.path.startswith("/static/"):
+        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+    return response
 
 PORT = int(os.environ.get("SEESTORY_PORT", "5001"))
 VIDEO_W = int(os.environ.get("SEESTORY_W", "1280"))
 VIDEO_H = int(os.environ.get("SEESTORY_H", "720"))
 VIDEO_FPS = int(os.environ.get("SEESTORY_FPS", "30"))
+
+DESKTOP.install(app, base_dir=BASE, port=PORT)
 
 
 # ── helpers ──────────────────────────────────────────────────────────────
@@ -71,7 +86,20 @@ def _slug(s, n=40):
 
 
 def _job_dir(job):
+    """Internal job folder helper for server-created safe job names."""
     return os.path.join(OUTPUT, job)
+
+
+def _session_dir_safe(job):
+    return VALID.safe_session_dir(OUTPUT, job)
+
+
+def _temp_upload_path(prefix: str, filename: str) -> str:
+    return VALID.temp_upload_path(UPLOADS, prefix, filename)
+
+
+def _clean_motion(raw) -> dict:
+    return VALID.clean_motion(raw, KB.DEFAULT_MOTION)
 
 
 def _sse(obj):
@@ -86,11 +114,17 @@ def save_project(proj):
 
 
 def load_project(job):
-    p = os.path.join(_job_dir(job), "project.json")
+    folder = _session_dir_safe(job)
+    if not folder:
+        return None
+    p = os.path.join(folder, "project.json")
     if not os.path.exists(p):
         return None
-    with open(p, encoding="utf-8") as f:
-        return json.load(f)
+    try:
+        with open(p, encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return None
 
 
 def _parse_book(path):
@@ -113,9 +147,8 @@ def _shot_from(d):
     s = TL.Shot(**{k: d[k] for k in (
         "id", "chapter_index", "chapter_title", "shot_in_chapter",
         "page_start", "page_end", "text", "start_ms", "end_ms")})
-    for k in ("is_chapter_start", "word_count", "prompt", "backend",
-              "highlight_score", "highlighted", "image_path", "status",
-              "error", "motion"):
+    for k in ("is_chapter_start", "word_count", "prompt", "image_path",
+              "status", "error", "motion"):
         if k in d:
             setattr(s, k, d[k])
     return s
@@ -129,13 +162,19 @@ def _shot_json(s):
 @app.route("/")
 def index():
     return render_template(
-        "index.html", ffmpeg_ok=ASM.ensure_ffmpeg(), probe=imagegen.probe(),
-        presets=list(KB.PRESETS.keys()), styles=list(DIR.StyleBible.PRESETS.keys()),
-        default_motion=KB.DEFAULT_MOTION)
+        "index.html", presets=list(KB.PRESETS.keys()),
+        styles=list(DIR.StyleBible.PRESETS.keys()), default_motion=KB.DEFAULT_MOTION)
+
+
+@app.route("/api/health")
+def api_health():
+    """Lightweight launcher readiness check; avoids loading GPU libraries."""
+    return jsonify({"ok": True})
 
 
 @app.route("/api/probe")
 def api_probe():
+    """Detailed local diagnostics, intentionally separate from startup readiness."""
     return jsonify(imagegen.probe() | {"ffmpeg": ASM.ensure_ffmpeg()})
 
 
@@ -146,7 +185,7 @@ def page_check():
     ebook = request.files.get("ebook")
     if not ebook:
         return jsonify({"has_pages": False})
-    tmp = os.path.join(UPLOADS, "_pagecheck" + os.path.splitext(ebook.filename)[1].lower())
+    tmp = _temp_upload_path("pagecheck", ebook.filename)
     ebook.save(tmp)
     info = {"has_pages": False, "page_count": 0}
     try:
@@ -170,75 +209,75 @@ def page_check():
 
 @app.route("/api/sample", methods=["POST"])
 def sample():
-    """Generate ONE preview image from a random page, using Stable Diffusion
-    (falls back to placeholder if SD isn't available)."""
+    """Generate one local preview image from a random page."""
     ebook = request.files.get("ebook")
     if not ebook:
         return jsonify({"error": "Add your ebook above first, then generate a sample."}), 400
+
     style_key = request.form.get("style_key", "cinematic")
     custom_style = request.form.get("custom_style", "")
-    wpp = int(request.form.get("words_per_page", 280) or 280)
+    try:
+        wpp = max(80, min(2000, int(request.form.get("words_per_page", 280) or 280)))
+    except (TypeError, ValueError):
+        wpp = 280
 
-    tmp = os.path.join(UPLOADS, "_sample" + os.path.splitext(ebook.filename)[1].lower())
+    tmp = _temp_upload_path("sample", ebook.filename)
     ebook.save(tmp)
     try:
-        book = _parse_book(tmp)
-    except Exception as e:
-        return jsonify({"error": f"Could not read the ebook: {e}"}), 400
-    finally:
-        pass
+        try:
+            book = _parse_book(tmp)
+        except Exception as exc:
+            return jsonify({"error": f"Could not read the ebook: {exc}"}), 400
 
-    chapters = [c for c in book.chapters if len((c.text or "").split()) >= 30] or book.chapters
-    if not chapters:
-        return jsonify({"error": "No readable text found in the ebook."}), 400
-    ch = random.choice(chapters)
-    words = (ch.text or "").split()
-    if len(words) > wpp:
-        start = random.randint(0, len(words) - wpp)
-        page_text = " ".join(words[start:start + wpp])
-        page_no = start // max(1, wpp) + 1
-    else:
-        page_text = " ".join(words)
-        page_no = 1
+        chapters = [c for c in book.chapters if len((c.text or "").split()) >= 30] or book.chapters
+        if not chapters:
+            return jsonify({"error": "No readable text found in the ebook."}), 400
 
-    shot = TL.Shot(id="sample", chapter_index=0, chapter_title=ch.title,
-                   shot_in_chapter=0, page_start=0, page_end=0, text=page_text,
-                   start_ms=0, end_ms=1000)
-    bible = DIR.StyleBible(style_key, custom_style)
-    DIR.direct([shot], bible)
-    shot.backend = "stablediffusion" if imagegen.probe()["stablediffusion"] else "placeholder"
+        ch = random.choice(chapters)
+        words = (ch.text or "").split()
+        if len(words) > wpp:
+            word_start = random.randint(0, len(words) - wpp)
+            page_text = " ".join(words[word_start:word_start + wpp])
+            page_no = word_start // max(1, wpp) + 1
+        else:
+            page_text = " ".join(words)
+            page_no = 1
 
-    sdir = os.path.join(OUTPUT, "_sample")
-    os.makedirs(sdir, exist_ok=True)
-    fn = f"sample_{int(time.time())}.jpg"
-    # Preview with the SAME model + guidance the real build will use, so the
-    # sample actually reflects the chosen style (e.g. the photoreal model).
-    sd_opts = {"w": 1024, "h": 576}
-    try:
-        sd_opts["guidance"] = float(request.form.get("sd_guidance", 1.6))
-    except (TypeError, ValueError):
-        pass
-    if style_key == "photoreal" and not os.environ.get("SEESTORY_SD_MODEL"):
-        sd_opts["model"] = imagegen.stablediffusion.PHOTOREAL_MODEL
-    try:
-        res = imagegen.generate_for(shot, os.path.join(sdir, fn), sd_opts=sd_opts)
-    except Exception as e:
-        return jsonify({"error": f"Sample generation failed: {e}"}), 500
+        shot = TL.Shot(
+            id="sample", chapter_index=0, chapter_title=ch.title, shot_in_chapter=0,
+            page_start=0, page_end=0, text=page_text, start_ms=0, end_ms=1000,
+        )
+        DIR.direct([shot], DIR.StyleBible(style_key, custom_style))
+
+        sdir = os.path.join(OUTPUT, "_sample")
+        os.makedirs(sdir, exist_ok=True)
+        fn = f"sample_{int(time.time())}.jpg"
+        opts = {"w": 1024, "h": 576}
+        if not os.environ.get("SEESTORY_SD_MODEL"):
+            SD = imagegen.stablediffusion
+            if style_key == "photoreal":
+                opts["model"] = SD.PHOTOREAL_MODEL
+            elif style_key == "cinematic":
+                opts["model"] = SD.DEFAULT_MODEL
+            else:
+                opts["model"] = SD.ARTISTIC_MODEL
+        try:
+            imagegen.generate_for(shot, os.path.join(sdir, fn), sd_opts=opts)
+        except Exception as exc:
+            return jsonify({"error": f"Sample generation failed: {exc}"}), 500
+
+        return jsonify({
+            "image_url": f"/image/_sample/{fn}",
+            "page_text": page_text,
+            "prompt": shot.prompt,
+            "chapter_title": ch.title,
+            "page_no": page_no,
+        })
     finally:
         try:
             os.unlink(tmp)
         except OSError:
             pass
-
-    return jsonify({
-        "image_url": f"/image/_sample/{fn}",
-        "page_text": page_text,
-        "prompt": shot.prompt,
-        "chapter_title": ch.title,
-        "page_no": page_no,
-        "backend_used": res["backend"],
-        "note": res.get("note", ""),
-    })
 
 
 @app.route("/api/ingest", methods=["POST"])
@@ -350,19 +389,23 @@ def ingest():
                 use_chapters.append(_PairedChapter(mtitle, txt))
             spans = _spans(markers, total_ms)
 
-            words_per_page = int(opts.get("words_per_page", 280))
-            pages_per_shot = int(opts.get("pages_per_shot", 1))
-            mode = opts.get("mode", "both")
-            style_key = opts.get("style_key", "cinematic")
-            custom_style = opts.get("custom_style", "")
-            copilot_every = int(opts.get("copilot_every_pages", 10))
-            copilot_cap = int(opts.get("copilot_cap", 30))
-            page_basis = opts.get("page_basis", "words")
-            page_count = int(opts.get("page_count", 0) or 0)
             try:
-                guidance = float(opts.get("sd_guidance", 1.6))
+                words_per_page = max(80, min(2000, int(opts.get("words_per_page", 280))))
             except (TypeError, ValueError):
-                guidance = 1.6
+                words_per_page = 280
+            try:
+                pages_per_shot = max(1, min(20, int(opts.get("pages_per_shot", 1))))
+            except (TypeError, ValueError):
+                pages_per_shot = 1
+            style_key = opts.get("style_key", "cinematic")
+            if style_key not in DIR.StyleBible.PRESETS:
+                style_key = "cinematic"
+            custom_style = (opts.get("custom_style", "") or "")[:500]
+            page_basis = "embedded" if opts.get("page_basis") == "embedded" else "words"
+            try:
+                page_count = max(0, min(1_000_000, int(opts.get("page_count", 0) or 0)))
+            except (TypeError, ValueError):
+                page_count = 0
 
             yield _sse({"type": "stage", "pct": 58, "label": "Splitting into pages…"})
             shots = TL.segment_book(use_chapters, spans, words_per_page=words_per_page,
@@ -372,20 +415,13 @@ def ingest():
             bible = DIR.StyleBible(style_key, custom_style)
             DIR.direct(shots, bible)
 
-            yield _sse({"type": "stage", "pct": 88, "label": "Choosing image sources…"})
-            sd_backend = "stablediffusion" if imagegen.probe()["stablediffusion"] else "placeholder"
-            summary = DIR.route_backends(
-                shots, mode=mode, sd_backend=sd_backend,
-                copilot_every_pages=copilot_every, copilot_cap=copilot_cap)
-            default_motion = dict(KB.DEFAULT_MOTION)
+            yield _sse({"type": "stage", "pct": 88, "label": "Preparing the storyboard…"})
             try:
-                m = json.loads(opts.get("motion", "") or "{}")
-                if isinstance(m, dict):
-                    default_motion.update({k: m[k] for k in m if k in KB.DEFAULT_MOTION})
-            except Exception:
-                pass
-            for s in shots:
-                s.motion = dict(default_motion)
+                default_motion = _clean_motion(json.loads(opts.get("motion", "") or "{}"))
+            except (TypeError, ValueError, json.JSONDecodeError):
+                default_motion = dict(KB.DEFAULT_MOTION)
+            for shot in shots:
+                shot.motion = dict(default_motion)
 
             proj = {
                 "job": job, "title": book.title or "Audiobook",
@@ -396,11 +432,9 @@ def ingest():
                 "total_ms": total_ms,
                 "markers": markers,
                 "settings": {
-                    "mode": mode, "words_per_page": words_per_page,
+                    "words_per_page": words_per_page,
                     "pages_per_shot": pages_per_shot, "style_key": style_key,
-                    "custom_style": custom_style, "copilot_every_pages": copilot_every,
-                    "copilot_cap": copilot_cap, "sd_backend": sd_backend,
-                    "guidance": guidance,
+                    "custom_style": custom_style,
                     "page_basis": page_basis, "page_count": page_count,
                     "subtitle_mode": opts.get("subtitle_mode", "none"),
                     "subtitle_file": os.path.basename(subtitle_path) if subtitle_path else None,
@@ -409,7 +443,6 @@ def ingest():
                 },
                 "bible": bible.to_json(),
                 "shots": [_shot_json(s) for s in shots],
-                "routing": summary,
                 "alignment": {
                     "skipped": align["skipped"],
                     "empty_text": empty_text,
@@ -440,13 +473,13 @@ def update_shot(job, shot_id):
     body = request.get_json(force=True)
     for s in proj["shots"]:
         if s["id"] == shot_id:
-            for k in ("prompt", "backend", "motion"):
-                if k in body:
-                    s[k] = body[k]
             if "prompt" in body:
+                s["prompt"] = str(body.get("prompt") or "")[:2000]
                 # Remember the user hand-edited this prompt, so a later regenerate
                 # won't overwrite it with an auto-rebuilt one.
                 s["prompt_edited"] = True
+            if "motion" in body:
+                s["motion"] = _clean_motion(body.get("motion"))
             save_project(proj)
             return jsonify(s)
     return jsonify({"error": "shot not found"}), 404
@@ -469,10 +502,11 @@ def delete_shot(job, shot_id):
         shots[idx - 1]["end_ms"] = gone["end_ms"]
     elif shots:
         shots[idx]["start_ms"] = gone["start_ms"]
+    folder = _session_dir_safe(job)
     img = gone.get("image_path")
-    if img and os.path.exists(os.path.join(_job_dir(job), img)):
+    if folder and img and os.path.exists(os.path.join(folder, img)):
         try:
-            os.unlink(os.path.join(_job_dir(job), img))
+            os.unlink(os.path.join(folder, img))
         except OSError:
             pass
     save_project(proj)
@@ -503,36 +537,39 @@ def regenerate_shot(job, shot_id):
             rec["prompt"] = s.prompt
         except Exception:
             pass
-    out = os.path.join(_job_dir(job), "images", f"{shot_id}.jpg")
-    # A manual regenerate should always give the intended backend a fresh try —
-    # clear any per-run Copilot breaker left over from a bulk run.
-    if rec.get("backend") == "copilot":
-        try:
-            from .imagegen import copilot_backend as _cb
-            _cb.reset_run_state()
-        except Exception:
-            pass
-    res = imagegen.generate_for(s, out, sd_opts=_sd_opts(proj))
+    folder = _session_dir_safe(job)
+    if not folder:
+        return jsonify({"error": "Project folder is missing."}), 404
+    out = os.path.join(folder, "images", f"{shot_id}.jpg")
+    try:
+        imagegen.generate_for(s, out, sd_opts=_sd_opts(proj))
+    except Exception as exc:
+        rec["status"] = "error"
+        rec["error"] = str(exc)
+        save_project(proj)
+        return jsonify({"error": str(exc)}), 500
     rec["image_path"] = f"images/{shot_id}.jpg"
     rec["status"] = "done"
-    rec["backend_used"] = res["backend"]
-    rec["error"] = res.get("error", "")
+    rec["error"] = ""
     save_project(proj)
-    return jsonify(rec | {"cache_bust": int(time.time()), "note": res.get("note", "")})
+    return jsonify(rec | {"cache_bust": int(time.time())})
 
 
 def _sd_opts(proj):
-    s = proj["settings"]
-    o = {"w": s.get("w", VIDEO_W), "h": s.get("h", VIDEO_H)}
-    g = s.get("guidance")
-    if g is not None:
-        o["guidance"] = g
-    # Photorealistic style → load the photoreal checkpoint instead of turbo,
-    # unless the user has pinned a specific model via SEESTORY_SD_MODEL.
-    if s.get("style_key") == "photoreal" and not os.environ.get("SEESTORY_SD_MODEL"):
-        from .imagegen import stablediffusion as SD
-        o["model"] = SD.PHOTOREAL_MODEL
-    return o
+    settings = proj["settings"]
+    opts = {"w": settings.get("w", VIDEO_W), "h": settings.get("h", VIDEO_H)}
+    # An explicit SEESTORY_SD_MODEL pins every style to one user-selected model.
+    if os.environ.get("SEESTORY_SD_MODEL"):
+        return opts
+    from .imagegen import stablediffusion as SD
+    style = settings.get("style_key", "cinematic")
+    if style == "photoreal":
+        opts["model"] = SD.PHOTOREAL_MODEL
+    elif style == "cinematic":
+        opts["model"] = SD.DEFAULT_MODEL
+    else:
+        opts["model"] = SD.ARTISTIC_MODEL
+    return opts
 
 
 @app.route("/api/project/<job>/generate", methods=["POST"])
@@ -543,62 +580,42 @@ def generate_all(job):
 
     @stream_with_context
     def stream():
+        folder = _session_dir_safe(job)
+        if not folder:
+            yield _sse({"type": "error", "message": "Project folder is missing."})
+            return
         sd_opts = _sd_opts(proj)
         shots = proj["shots"]
-        pending = [s for s in shots if s.get("status") != "done"
-                   or not s.get("image_path")]
+        pending = [shot for shot in shots
+                   if shot.get("status") != "done" or not shot.get("image_path")]
         yield _sse({"type": "start", "total": len(pending),
                     "already": len(shots) - len(pending)})
 
-        # If any shot is meant to use Copilot, reset its per-run state and report
-        # its status once up front so any fallback reason is visible immediately.
-        if any(s.get("backend") == "copilot" for s in pending):
-            try:
-                from .imagegen import copilot_backend as _cb
-                _cb.reset_run_state()
-                msg = _cb.diagnose()
-                sys.stderr.write(f"[seestory] copilot: {msg}\n")
-                sys.stderr.flush()
-                yield _sse({"type": "info", "message": f"Copilot: {msg}"})
-            except Exception:
-                pass
-
         done = 0
-        warned_copilot = False
+        failed = 0
         for rec in shots:
             if rec.get("status") == "done" and rec.get("image_path"):
                 continue
-            s = _shot_from(rec)
-            out = os.path.join(_job_dir(job), "images", f"{rec['id']}.jpg")
+            shot = _shot_from(rec)
+            out = os.path.join(folder, "images", f"{rec['id']}.jpg")
             try:
-                res = imagegen.generate_for(s, out, sd_opts=sd_opts)
+                imagegen.generate_for(shot, out, sd_opts=sd_opts)
                 rec["image_path"] = f"images/{rec['id']}.jpg"
                 rec["status"] = "done"
-                rec["backend_used"] = res["backend"]
-                rec["error"] = res.get("error", "")
-                note = res.get("note", "")
-            except Exception as e:
+                rec["error"] = ""
+            except Exception as exc:
+                failed += 1
                 rec["status"] = "error"
-                rec["error"] = str(e)
-                note = "error"
-            # The first time a Copilot shot falls back, surface WHY prominently
-            # (once) in the build log + console, so it isn't lost in the per-shot
-            # noise.
-            if (not warned_copilot and rec.get("backend") == "copilot"
-                    and rec.get("backend_used") not in (None, "", "copilot")):
-                warned_copilot = True
-                detail = rec.get("error") or "Copilot was unavailable."
-                sys.stderr.write(f"[seestory] copilot fallback: {detail}\n")
-                sys.stderr.flush()
-                yield _sse({"type": "info", "message": detail})
+                rec["error"] = str(exc)
+                rec["image_path"] = None
             done += 1
             save_project(proj)
-            yield _sse({"type": "shot", "id": rec["id"], "done": done,
-                        "total": len(pending), "status": rec["status"],
-                        "backend_used": rec.get("backend_used", ""),
-                        "note": note, "error": rec.get("error", ""),
-                        "cache_bust": int(time.time())})
-        yield _sse({"type": "complete", "done": done})
+            yield _sse({
+                "type": "shot", "id": rec["id"], "done": done,
+                "total": len(pending), "status": rec["status"],
+                "error": rec.get("error", ""), "cache_bust": int(time.time()),
+            })
+        yield _sse({"type": "complete", "done": done, "failed": failed})
 
     return Response(stream(), mimetype="text/event-stream")
 
@@ -611,11 +628,21 @@ def assemble(job):
 
     @stream_with_context
     def stream():
-        jd = _job_dir(job)
+        jd = _session_dir_safe(job)
+        if not jd:
+            yield _sse({"type": "error", "message": "Project folder is missing."})
+            return
         s = proj["settings"]
         w, h, fps = s.get("w", VIDEO_W), s.get("h", VIDEO_H), s.get("fps", VIDEO_FPS)
-        ready = [r for r in proj["shots"] if r.get("image_path")
-                 and os.path.exists(os.path.join(jd, r["image_path"]))]
+        ready = [rec for rec in proj["shots"] if rec.get("image_path")
+                 and os.path.exists(os.path.join(jd, rec["image_path"]))]
+        missing = len(proj["shots"]) - len(ready)
+        if missing:
+            yield _sse({
+                "type": "error",
+                "message": f"{missing} storyboard image(s) are missing. Generate or regenerate them before stitching."
+            })
+            return
         if not ready:
             yield _sse({"type": "error", "message": "No images yet — generate first."})
             return
@@ -718,18 +745,6 @@ def assemble(job):
     return Response(stream(), mimetype="text/event-stream")
 
 
-def _session_dir_safe(job):
-    """Resolve a job to its folder under OUTPUT, or None — guards against path
-    traversal and non-session folders (_sample, _ingest, .gitkeep)."""
-    name = os.path.basename(os.path.normpath(job or ""))
-    if not name or name.startswith("_") or name.startswith("."):
-        return None
-    d = os.path.join(OUTPUT, name)
-    if os.path.dirname(os.path.abspath(d)) != os.path.abspath(OUTPUT):
-        return None
-    return d if os.path.isdir(d) else None
-
-
 @app.route("/api/project/<job>", methods=["DELETE"])
 def delete_project(job):
     """Remove a single recent session (its folder, images and any built video)."""
@@ -741,14 +756,6 @@ def delete_project(job):
     except OSError as e:
         return jsonify({"error": str(e)}), 500
     return jsonify({"ok": True})
-
-
-@app.route("/api/copilot_test", methods=["POST"])
-def copilot_test():
-    """Fire one real Copilot call and report whether it worked + why not."""
-    from .imagegen import copilot_backend as cb
-    ok, detail = cb.test()
-    return jsonify({"ok": ok, "detail": detail})
 
 
 @app.route("/api/projects/clear", methods=["POST"])
@@ -778,13 +785,9 @@ def motion_all(job):
     proj = load_project(job)
     if not proj:
         return jsonify({"error": "Project not found."}), 404
-    m = (request.get_json(force=True) or {}).get("motion") or {}
-    clean = {k: m[k] for k in m if k in KB.DEFAULT_MOTION}
-    for s in proj["shots"]:
-        mm = dict(KB.DEFAULT_MOTION)
-        mm.update(s.get("motion") or {})
-        mm.update(clean)
-        s["motion"] = mm
+    motion = _clean_motion((request.get_json(force=True) or {}).get("motion"))
+    for shot in proj["shots"]:
+        shot["motion"] = dict(motion)
     save_project(proj)
     return jsonify({"ok": True, "count": len(proj["shots"])})
 
@@ -818,7 +821,8 @@ def list_projects():
             "job": p.get("job", name),
             "title": p.get("title", "Audiobook"),
             "shots": len(shots), "done": done,
-            "has_video": bool(p.get("video_file")),
+            "has_video": bool(p.get("video_file") and
+                              os.path.exists(os.path.join(OUTPUT, name, p["video_file"]))),
             "video_file": p.get("video_file"),
             "total_ms": p.get("total_ms", 0),
             "modified": modified,
@@ -829,10 +833,11 @@ def list_projects():
 
 @app.route("/api/motion_preview", methods=["POST"])
 def motion_preview():
-    """Render a short Ken Burns clip so the user can see the motion before
-    committing. Uses the latest sample image if there is one, else a placeholder."""
+    """Render a short Ken Burns clip so the user can see motion before committing.
+    The latest generated sample is used when available; otherwise a neutral local
+    preview frame is created solely for this animation preview."""
     body = request.get_json(force=True) or {}
-    motion = body.get("motion") or {}
+    motion = _clean_motion(body.get("motion"))
     sdir = os.path.join(OUTPUT, "_sample")
     os.makedirs(sdir, exist_ok=True)
     imgs = sorted(f for f in os.listdir(sdir)
@@ -840,10 +845,9 @@ def motion_preview():
     if imgs:
         src = os.path.join(sdir, imgs[-1])
     else:
-        from .imagegen import placeholder
+        from . import preview_frame
         src = os.path.join(sdir, "preview_src.jpg")
-        placeholder.generate("a sweeping landscape, motion preview", src,
-                             w=1024, h=576, label="preview")
+        preview_frame.create(src, w=1024, h=576)
     out = os.path.join(sdir, f"preview_{int(time.time())}.mp4")
     # Length follows the drift pace (set by speed) plus a short hold, so the
     # preview shows the motion completing and settling — exactly the real look.
@@ -859,26 +863,24 @@ def motion_preview():
 
 @app.route("/image/<job>/<path:fn>")
 def image(job, fn):
-    return send_from_directory(os.path.join(_job_dir(job)), fn)
+    if job == "_sample":
+        folder = os.path.join(OUTPUT, "_sample")
+    else:
+        folder = _session_dir_safe(job)
+    if not folder:
+        return jsonify({"error": "not found"}), 404
+    return send_from_directory(folder, fn)
 
 
 @app.route("/download/<job>/<path:fn>")
 def download(job, fn):
-    return send_from_directory(_job_dir(job), fn, as_attachment=True)
+    folder = _session_dir_safe(job)
+    if not folder:
+        return jsonify({"error": "not found"}), 404
+    return send_from_directory(folder, fn, as_attachment=True)
 
 
 # ── startup ──────────────────────────────────────────────────────────────
-def _raise_priority():
-    """Best-effort: keep GPU work from being throttled when the window is in
-    the background (mirrors the issue Parroty hit on laptops)."""
-    try:
-        if os.name == "nt":
-            import ctypes
-            ctypes.windll.kernel32.SetPriorityClass(-1, 0x00000080)  # HIGH
-    except Exception:
-        pass
-
-
 def _open_browser():
     time.sleep(1.2)
     try:
@@ -888,7 +890,7 @@ def _open_browser():
 
 
 def main():
-    _raise_priority()
+    DESKTOP.start()
     if "--no-browser" not in sys.argv:
         threading.Thread(target=_open_browser, daemon=True).start()
     print(f"SeeStory running at http://127.0.0.1:{PORT}")
