@@ -1,477 +1,342 @@
-# SeeStory — Launcher Build Guide
+# SeeStory build and Windows launcher guide
 
-The Windows `.bat` launchers are intentionally **kept out of version control** (they're in `.gitignore`). This guide documents every launcher and gives its full contents so you can recreate them after cloning.
+This document is the source of truth for rebuilding the Windows helper files that are intentionally excluded from git. The release/test ZIP may contain these BAT files for convenience, but the repository keeps `*.bat`, `*.cmd`, and `*.lnk` ignored.
 
-## Table of Contents
+## Build/runtime layout
 
-- [Why the launchers aren't in the repo](#why-the-launchers-arent-in-the-repo)
-- [How to recreate them](#how-to-recreate-them)
-- [The launchers at a glance](#the-launchers-at-a-glance)
-- [Optional: the Copilot library](#optional-the-copilot-library)
-- [File contents](#file-contents)
-  - [`setup.bat`](#setupbat)
-  - [`run.bat`](#runbat)
-  - [`stop.bat`](#stopbat)
-  - [`check_gpu.bat`](#check-gpubat)
-  - [`install_stable_diffusion.bat`](#install-stable-diffusionbat)
-  - [`setup_copilot.bat`](#setup-copilotbat)
-  - [`login_copilot.bat`](#login-copilotbat)
-- [Notes (encoding & line endings)](#notes-encoding--line-endings)
+- `launch_seestory.pyw` — hidden desktop launcher. Starts Flask with `pythonw.exe`, waits for readiness, opens the tracked Chrome/Edge app window, and shuts the server down when that window closes.
+- `app/desktop_runtime.py` — lifecycle heartbeat, Windows HIGH priority/power-throttling safeguards, diagnostics state, and system monitor API.
+- `stop_seestory.py` — explicit stop helper used by `stop.bat`.
+- `shutdown_diagnostic.py` — writes a timestamped shutdown/process diagnostic.
+- `install_models.py` — installer-only model download, warm-load, CUDA inference smoke test, and model-install logging.
+- `build_icons.py` — recreates the high-resolution PNG and multi-size Windows ICO used by the shortcut.
+- `assets/SeeStory.ico` — desktop shortcut icon.
+- `output/`, `uploads/`, `logs/`, `runtime/`, `venv/` — local/generated state and never release-source content.
 
-## Why the launchers aren't in the repo
+## Local image models
 
-They're small, machine‑specific conveniences rather than application code, and downloaded `.bat` files can trip Windows SmartScreen/antivirus — so they're regenerated locally instead of committed. The application itself lives in `app/`; the launchers only wrap `python -m app.server` and the setup steps.
+The app has one local image-generation path with automatic style routing: Cinematic/Storybook/Noir/Oil/Ink use `Lykon/dreamshaper-xl-lightning`, and Photorealistic uses `SG161222/RealVisXL_V5.0_Lightning`. Both repositories publish a complete Diffusers fp16/Safetensors layout.
+The weights are not committed or bundled; each downloaded model remains under its own upstream license.
 
-## How to recreate them
+`install_all.bat` owns every large model transfer. It installs CUDA-enabled PyTorch and the image stack, downloads/resumes the required illustration model, warm-loads it, performs a real CUDA inference, records peak VRAM, and saves a smoke-test image. The optional Photorealistic model is offered and verified the same way. The desktop runtime is forced offline for Hugging Face/Transformers, so Flask never starts model downloads. ffmpeg is a separate system dependency and is checked by the installer. Pass `default` to skip the optional-model prompt or `all` to install both models non-interactively.
 
-For each file in [File contents](#file-contents):
+## Desktop startup and shutdown
 
-1. Create a new text file in the SeeStory folder with the **exact** name (e.g. `setup.bat`).
-2. Paste the matching block below.
-3. Save it with **Windows (CRLF) line endings** and ANSI/UTF‑8 encoding.
-4. Double‑click `setup.bat` first, then `run.bat`.
+The launcher reuses `%LOCALAPPDATA%\SeeStory\BrowserProfile` for the dedicated browser app. Do not switch back to a unique profile per launch: fresh browser profiles can trigger first-run/profile process churn and visible window flashes. The profile is outside the repository. A Windows named mutex also prevents multiple launcher instances from racing if the shortcut is double-clicked more than once.
 
-> Tip: in Notepad, *Save As* → set *Encoding* to ANSI; CRLF is the Windows default. In VS Code, click the `LF`/`CRLF` indicator in the status bar and choose **CRLF**.
+Closing the tracked app window calls the token-protected local shutdown endpoint. A browser heartbeat is a fallback for crash/process handoff cases. The explicit `stop.bat` path remains available.
 
-## The launchers at a glance
+## Repository rules
 
-| File | What it does | When you run it |
-|------|--------------|-----------------|
-| `setup.bat` | First‑time setup: builds the Python venv, installs the app + Stable Diffusion, and installs the optional Copilot dependencies. Run once. `setup.bat nosd` skips the big SD download. | once, first |
-| `run.bat` | Starts SeeStory and opens Chrome at http://127.0.0.1:5001. Run every time you use it; keep the window open while generating. | every time |
-| `stop.bat` | Stops a running SeeStory server and frees port 5001. | as needed |
-| `check_gpu.bat` | Prints your PyTorch version and whether the CUDA GPU is detected. | as needed |
-| `install_stable_diffusion.bat` | (Re)installs the Stable Diffusion backend on its own. `install_stable_diffusion.bat force` does a clean PyTorch reinstall. | as needed |
-| `setup_copilot.bat` | Optional. Installs the Copilot library's dependencies and runs the one‑time Microsoft sign‑in. | once (optional) |
-| `login_copilot.bat` | Optional. Re‑runs the Copilot Microsoft sign‑in (refreshes the session). | as needed (optional) |
+Before releasing, `git status` should contain no BAT/CMD/shortcut, venv, model cache, runtime state, logs, uploads, generated project output, or shutdown-diagnostic files. `.gitignore` enforces these rules.
 
-## Optional: the Copilot library
+## Exact Windows BAT files
 
-**Copilot is entirely optional** — SeeStory runs fully on Stable Diffusion and
-placeholders without it. The `Windows-Copilot-API` library it needs is **not
-committed to this repo** (it's a third‑party project, kept out of version control
-just like the launchers), so a fresh clone won't have it. Add it only if you want
-the premium Copilot image source.
+The following blocks are generated from the BAT files included in this package. When changing a BAT, update this document in the same release.
 
-To enable Copilot:
-
-1. Get the library into a `Windows-Copilot-API` folder in the SeeStory root
-   (next to `app/`):
-
-   ```bat
-   git clone https://github.com/sums001/Windows-Copilot-API
-   ```
-
-   (or download the repo ZIP and extract it so you have
-   `SeeStory\Windows-Copilot-API\copilot\…`).
-2. Build `setup_copilot.bat` and `login_copilot.bat` from
-   [File contents](#file-contents) if you don't already have them.
-3. Run **`setup_copilot.bat`** once — it installs the library's Python
-   dependencies and the Playwright Chromium used for sign‑in, then opens a
-   one‑time Microsoft sign‑in.
-4. Later, **`login_copilot.bat`** re‑runs that sign‑in to refresh the session.
-
-After signing in, restart SeeStory; the **copilot** badge turns green and the
-**Test Copilot** button confirms it works. If Microsoft changes their protocol
-and you hit an "invalid‑event" error, replace the `Windows-Copilot-API\copilot`
-folder with the latest from the repo above.
-
-> The `setup.bat` launcher also tries to install the Copilot dependencies if the
-> `Windows-Copilot-API` folder is present; if it's absent, that step is skipped
-> harmlessly and SeeStory still installs normally.
-
-## File contents
-
-### `setup.bat`
-
-First‑time setup: builds the Python venv, installs the app + Stable Diffusion, and installs the optional Copilot dependencies. Run once. `setup.bat nosd` skips the big SD download.
+### `install_all.bat`
 
 ```bat
 @echo off
-setlocal enableextensions
+setlocal EnableExtensions
 cd /d "%~dp0"
-title SeeStory setup
+title SeeStory - Install All
 
-echo.
-echo ===== SeeStory setup =====
-echo.
-
-powershell -NoProfile -Command "Set-ExecutionPolicy -Scope CurrentUser RemoteSigned -Force" >nul 2>nul
-
-REM --- find Python (prefer 3.12 via the launcher, else plain python) --------
-set "PYLAUNCH=python"
+set "PYLAUNCH="
 where py >nul 2>nul
-if not errorlevel 1 set "PYLAUNCH=py -3.12"
-echo Using launcher: %PYLAUNCH%
+if not errorlevel 1 (
+  py -3.12 -c "import sys; sys.exit(0 if sys.version_info[:2]==(3,12) else 1)" >nul 2>nul
+  if not errorlevel 1 set "PYLAUNCH=py -3.12"
+)
+if not defined PYLAUNCH (
+  where python >nul 2>nul
+  if not errorlevel 1 (
+    python -c "import sys; sys.exit(0 if sys.version_info[:2]==(3,12) else 1)" >nul 2>nul
+    if not errorlevel 1 set "PYLAUNCH=python"
+  )
+)
+
+set "HF_HUB_DISABLE_TELEMETRY=1"
+set "HF_HUB_DOWNLOAD_TIMEOUT=900"
+set "HF_HUB_ETAG_TIMEOUT=60"
+set "TOKENIZERS_PARALLELISM=false"
+set "PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True"
+
+if not exist logs mkdir logs
+
+echo ================================================================
+echo  SEESTORY - INSTALL ALL
+echo ================================================================
+echo.
+echo This creates the local environment, installs and GPU-tests the
+echo required image model, checks ffmpeg, and creates the shortcut.
+echo.
+echo IMPORTANT: The required model is about 7 GB. It is downloaded here,
+echo not later from the SeeStory web page. Windows Defender may scan the
+echo new files during this installation, so the model step can take time.
 echo.
 
-REM --- create the venv (skip if present) -----------------------------------
-if exist "venv\Scripts\python.exe" goto :have_venv
-echo Creating virtual environment...
-%PYLAUNCH% -m venv venv
-if errorlevel 1 goto :venv_fail
-goto :venv_ok
-:venv_fail
-echo.
-echo ERROR: could not create the virtual environment.
-echo Install Python 3.10 or newer first: https://www.python.org/downloads/
-goto :end
-:have_venv
-echo Virtual environment already exists - reusing it.
-:venv_ok
-set "VPY=venv\Scripts\python.exe"
+if not defined PYLAUNCH (
+  echo Python 3.12 was not found.
+  echo Install Python 3.12 from python.org, then run this file again.
+  goto :fail
+)
+
+if exist "venv\Scripts\python.exe" (
+  "venv\Scripts\python.exe" -c "import sys; sys.exit(0 if sys.version_info[:2]==(3,12) else 1)" >nul 2>nul
+  if errorlevel 1 (
+    echo [1/8] Existing venv uses the wrong Python version - rebuilding it...
+    rmdir /s /q venv
+  )
+)
+if not exist "venv\Scripts\python.exe" (
+  echo [1/8] Creating Python 3.12 virtual environment...
+  %PYLAUNCH% -m venv venv
+  if errorlevel 1 goto :fail
+) else (
+  echo [1/8] Existing Python 3.12 virtual environment found - reusing it.
+)
+set "PY=venv\Scripts\python.exe"
 
 echo.
-echo Upgrading pip...
-"%VPY%" -m pip install --upgrade pip
+echo [2/8] Updating pip and installing core requirements...
+"%PY%" -m pip install --upgrade pip setuptools wheel
+if errorlevel 1 goto :fail
+"%PY%" -m pip install -r requirements.txt
+if errorlevel 1 goto :fail
 
 echo.
-echo Installing core requirements...
-"%VPY%" -m pip install -r requirements.txt
-if errorlevel 1 goto :core_fail
-goto :core_ok
-:core_fail
-echo.
-echo ERROR: core requirements failed to install. Scroll up to see why.
-goto :end
-:core_ok
-
-if /I "%~1"=="nosd" goto :skip_sd
-
-echo.
-echo ============================================================
-echo  Installing Stable Diffusion - local image generation.
-echo  Large download, can take several minutes. To skip it,
-echo  close this window and run:   setup.bat nosd
-echo ============================================================
-echo.
-echo [1/2] Checking PyTorch / GPU...
-"%VPY%" -c "import torch,sys; sys.exit(0 if torch.cuda.is_available() else 1)" 2>nul
-if not errorlevel 1 goto :torch_have
-echo     Installing PyTorch with CUDA GPU support. Only 'torch' is replaced -
-echo     shared packages like jinja2 and MarkupSafe are left untouched.
-"%VPY%" -m pip uninstall -y torch >nul 2>nul
-"%VPY%" -m pip install torch --index-url https://download.pytorch.org/whl/cu128
-if not errorlevel 1 goto :torch_done
-echo     CUDA 12.8 unavailable - trying CUDA 12.4...
-"%VPY%" -m pip install torch --index-url https://download.pytorch.org/whl/cu124
-if not errorlevel 1 goto :torch_done
-echo     No GPU build available - installing CPU-only PyTorch ^(slower^).
-"%VPY%" -m pip install torch
-goto :torch_done
-:torch_have
-echo     PyTorch with a working CUDA GPU is already installed - skipping the download.
-:torch_done
+echo [3/8] Checking NVIDIA PyTorch / CUDA...
+"%PY%" -c "import torch,sys; ok=torch.cuda.is_available(); print('Current PyTorch:',torch.__version__); print('CUDA available:',ok); sys.exit(0 if ok else 1)" 2>nul
+if errorlevel 1 (
+  echo Installing CUDA 12.8 PyTorch for RTX 50-series and other NVIDIA GPUs...
+  "%PY%" -m pip uninstall -y torch torchvision torchaudio >nul 2>nul
+  "%PY%" -m pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
+  if errorlevel 1 goto :fail
+) else (
+  echo CUDA-enabled PyTorch is already working.
+)
 
 echo.
-echo [2/2] diffusers stack...
-"%VPY%" -m pip install diffusers transformers accelerate safetensors
-if errorlevel 1 goto :sd_warn
+echo [4/8] Verifying the GPU image-generation stack...
+"%PY%" -c "import torch,diffusers,transformers,accelerate,safetensors,sys; ok=torch.cuda.is_available(); print('PyTorch:',torch.__version__); print('Diffusers:',diffusers.__version__); print('Transformers:',transformers.__version__); print('CUDA:',ok); print('GPU:',torch.cuda.get_device_name(0) if ok else 'NOT AVAILABLE'); sys.exit(0 if ok else 1)"
+if errorlevel 1 goto :gpu_fail
 
 echo.
-echo Verifying GPU...
-"%VPY%" -c "import torch; ok=torch.cuda.is_available(); print('  PyTorch', torch.__version__); print('  GPU available:', ok); print('  GPU:', torch.cuda.get_device_name(0) if ok else 'CPU only')"
-goto :sd_done
-
-:sd_warn
-echo.
-echo NOTE: Stable Diffusion did not fully install. SeeStory still runs with
-echo placeholder frames and the Copilot backend. Retry any time with:
-echo     install_stable_diffusion.bat
-goto :sd_done
-
-:skip_sd
-echo.
-echo Skipped Stable Diffusion. SeeStory will use placeholder frames until you
-echo install it - run  install_stable_diffusion.bat  whenever you like.
-
-:sd_done
-echo.
-echo ============================================================
-echo  Copilot backend (optional) - premium images for big moments.
-echo  The Windows-Copilot-API library is BUNDLED with SeeStory;
-echo  installing its Python dependencies now...
-echo ============================================================
-"%VPY%" -m pip install -r "Windows-Copilot-API\requirements.txt"
-if errorlevel 1 goto :copilot_warn
-echo.
-echo Installing the Playwright browser used for the one-time sign-in...
-"%VPY%" -m playwright install chromium
-if errorlevel 1 goto :copilot_warn
-goto :copilot_done
-:copilot_warn
-echo.
-echo NOTE: Copilot dependencies did not fully install. SeeStory still runs
-echo       with Stable Diffusion / placeholder. Retry later with setup_copilot.bat.
-:copilot_done
+echo [5/8] Checking ffmpeg...
+where ffmpeg >nul 2>nul
+if errorlevel 1 (
+  echo ffmpeg was not found. Attempting a winget install...
+  where winget >nul 2>nul
+  if not errorlevel 1 winget install --id Gyan.FFmpeg --exact --accept-package-agreements --accept-source-agreements
+  where ffmpeg >nul 2>nul
+  if errorlevel 1 echo WARNING: ffmpeg is still missing. Install it, then restart Windows or sign out/in.
+) else (
+  ffmpeg -version | findstr /B /C:"ffmpeg version"
+)
 
 echo.
-echo ============================================================
-echo  Setup complete!
-echo.
-echo  Start SeeStory:  double-click  run.bat
-echo                   opens Chrome at http://127.0.0.1:5001
-echo.
-echo  OPTIONAL - Copilot backend (premium images for the big moments):
-echo    The library is bundled and its dependencies are installed.
-echo    To enable it, sign in once:  double-click  login_copilot.bat
-echo    Then restart SeeStory - the "copilot" badge turns green, and you can
-echo    click "Test Copilot" in the header to confirm it works.
-echo    Repo: https://github.com/sums001/Windows-Copilot-API
-echo ============================================================
+echo [6/8] Installing and GPU-testing the required illustration model...
+"%PY%" "install_models.py" --model default
+if errorlevel 1 goto :model_fail
 
-:end
+echo.
+echo [7/8] Optional Photorealistic model...
+set "INSTALL_PHOTO="
+if /I "%~1"=="all" set "INSTALL_PHOTO=Y"
+if /I "%~1"=="default" set "INSTALL_PHOTO=N"
+if not defined INSTALL_PHOTO (
+  choice /C YN /N /M "Install and GPU-test the optional Photorealistic model too? [Y/N] "
+  if errorlevel 2 (set "INSTALL_PHOTO=N") else (set "INSTALL_PHOTO=Y")
+)
+if /I "%INSTALL_PHOTO%"=="Y" (
+  "%PY%" "install_models.py" --model photoreal
+  if errorlevel 1 goto :model_fail
+) else (
+  echo Skipped. Run install_all.bat again and choose Yes before using Photorealistic.
+)
+
+echo.
+echo [8/8] Creating app icons and desktop shortcut...
+"%PY%" "build_icons.py" --quiet
+if errorlevel 1 echo WARNING: App icon generation failed.
+if not exist "assets\SeeStory.ico" goto :icon_missing
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$root=(Resolve-Path '.').Path; $desktop=[Environment]::GetFolderPath('Desktop'); $w=New-Object -ComObject WScript.Shell; $s=$w.CreateShortcut((Join-Path $desktop 'SeeStory.lnk')); $s.TargetPath=(Join-Path $root 'venv\Scripts\pythonw.exe'); $s.Arguments='\"'+(Join-Path $root 'launch_seestory.pyw')+'\"'; $s.WorkingDirectory=$root; $s.IconLocation=(Join-Path $root 'assets\SeeStory.ico')+',0'; $s.Description='SeeStory - bring narrated audiobooks to life'; $s.Save()"
+if errorlevel 1 echo WARNING: The desktop shortcut could not be created. run.bat still works.
+goto :complete
+
+:icon_missing
+echo WARNING: assets\SeeStory.ico is missing. Shortcut was not created.
+
+:complete
+echo.
+echo ================================================================
+echo  INSTALL COMPLETE
+echo ================================================================
+echo  The required local model is downloaded, warm-loaded, and GPU-tested.
+if /I "%INSTALL_PHOTO%"=="Y" echo  The optional Photorealistic model also passed its GPU test.
+echo  Start SeeStory with the desktop shortcut or run.bat.
+echo  The app will not download model weights while it is running.
+echo.
+echo  Model install log: logs\model-install.log
+echo  Smoke images:      logs\model-smoke-*.jpg
+echo  Shutdown problems: run shutdown_diagnostic.bat
+echo ================================================================
 echo.
 pause
+exit /b 0
+
+:gpu_fail
+echo.
+echo CUDA could not be proven after installation. SeeStory will not silently
+echo use CPU for the image model. Update the NVIDIA driver and rerun this file.
+goto :fail
+
+:model_fail
+echo.
+echo The model download, warm-load, or real GPU inference test failed.
+echo Review logs\model-install.log, then rerun install_all.bat to resume.
+goto :fail
+
+:fail
+echo.
+echo ================================================================
+echo  INSTALL FAILED
+echo ================================================================
+echo Review the error above. Nothing was committed or uploaded.
+echo.
+pause
+exit /b 1
+```
+
+### `setup.bat`
+
+```bat
+@echo off
+cd /d "%~dp0"
+call install_all.bat %*
 ```
 
 ### `run.bat`
 
-Starts SeeStory and opens Chrome at http://127.0.0.1:5001. Run every time you use it; keep the window open while generating.
-
 ```bat
 @echo off
-REM ============================================================
-REM  SeeStory - start the app (VISIBLE console, foreground)
-REM  Double-click to launch. Chrome opens at http://127.0.0.1:5001.
-REM  Keep this window open while using SeeStory. Output is also
-REM  saved to seestory.log.
-REM ============================================================
+setlocal
 cd /d "%~dp0"
-title SeeStory
-
-if not exist "venv\Scripts\python.exe" (
-    echo. & echo No virtual environment found. Please run setup.bat first. & echo.
-    pause & exit /b 1
+if not exist "venv\Scripts\pythonw.exe" (
+  echo SeeStory is not installed yet.
+  echo Run install_all.bat first.
+  pause
+  exit /b 1
 )
-
-REM Disable console QuickEdit so clicking the window doesn't pause GPU work.
-powershell -NoProfile -Command "$sig='[DllImport(\"kernel32.dll\")]public static extern IntPtr GetStdHandle(int h);[DllImport(\"kernel32.dll\")]public static extern bool GetConsoleMode(IntPtr h,out uint m);[DllImport(\"kernel32.dll\")]public static extern bool SetConsoleMode(IntPtr h,uint m);'; $t=Add-Type -MemberDefinition $sig -Name K -Namespace W -PassThru; $h=$t::GetStdHandle(-10); $m=0; [void]$t::GetConsoleMode($h,[ref]$m); [void]$t::SetConsoleMode($h, ($m -bor 0x0080) -band (-bnot 0x0040))" 2>nul
-
-echo Starting SeeStory...  (Chrome will open shortly)
-echo.
-echo   Keep this window open while generating. For full GPU speed,
-echo   keep it in the foreground. Watch progress in the browser.
-echo   A copy of all messages is saved to seestory.log
-echo.
-powershell -NoProfile -Command "$host.UI.RawUI.WindowTitle='SeeStory'; & '%CD%\venv\Scripts\python.exe' -m app.server 2>&1 | Tee-Object -FilePath '%CD%\seestory.log'"
-
-echo.
-echo ============================================================
-echo  SeeStory has stopped. If unexpected, see seestory.log
-echo ============================================================
-pause
+start "" /b "venv\Scripts\pythonw.exe" "launch_seestory.pyw"
+exit /b 0
 ```
 
 ### `stop.bat`
 
-Stops a running SeeStory server and frees port 5001.
+```bat
+@echo off
+setlocal
+cd /d "%~dp0"
+if exist "venv\Scripts\python.exe" (
+  "venv\Scripts\python.exe" "stop_seestory.py"
+) else (
+  py -3.12 "stop_seestory.py" 2>nul || python "stop_seestory.py"
+)
+timeout /t 2 >nul
+```
+
+### `shutdown_diagnostic.bat`
 
 ```bat
 @echo off
-REM Stops any running SeeStory server (frees port 5001).
-title SeeStory - stop
-echo Stopping SeeStory...
-for /f "tokens=5" %%P in ('netstat -ano ^| findstr ":5001" ^| findstr LISTENING') do (
-    echo   killing PID %%P
-    taskkill /PID %%P /F >nul 2>nul
+setlocal
+cd /d "%~dp0"
+if exist "venv\Scripts\python.exe" (
+  "venv\Scripts\python.exe" "shutdown_diagnostic.py"
+) else (
+  py -3.12 "shutdown_diagnostic.py" 2>nul || python "shutdown_diagnostic.py"
 )
-echo Done.
-timeout /t 2 >nul
+echo.
+pause
 ```
 
 ### `check_gpu.bat`
 
-Prints your PyTorch version and whether the CUDA GPU is detected.
-
 ```bat
 @echo off
+setlocal
 cd /d "%~dp0"
-if not exist "venv\Scripts\python.exe" ( echo Run setup.bat first. & pause & exit /b 1 )
-"venv\Scripts\python.exe" -c "import torch; ok=torch.cuda.is_available(); print('PyTorch', torch.__version__); print('GPU available:', ok); print('GPU:', torch.cuda.get_device_name(0) if ok else '(CPU only)')" 2>nul || echo Stable Diffusion not installed yet ^(placeholder + Copilot still work^).
+if not exist "venv\Scripts\python.exe" (
+  echo Run install_all.bat first.
+  pause
+  exit /b 1
+)
+"venv\Scripts\python.exe" -c "import torch; ok=torch.cuda.is_available(); print('PyTorch:',torch.__version__); print('CUDA available:',ok); print('GPU:',torch.cuda.get_device_name(0) if ok else '(CPU only)'); print('CUDA build:',torch.version.cuda)"
+echo.
+nvidia-smi 2>nul
 pause
 ```
 
 ### `install_stable_diffusion.bat`
 
-(Re)installs the Stable Diffusion backend on its own. `install_stable_diffusion.bat force` does a clean PyTorch reinstall.
-
 ```bat
 @echo off
-setlocal enableextensions
+setlocal EnableExtensions
 cd /d "%~dp0"
-title SeeStory - install Stable Diffusion
+title SeeStory - Repair Local Models
 if not exist "venv\Scripts\python.exe" (
-    echo Run setup.bat first to create the environment.
-    echo.
-    pause
-    exit /b 1
+  echo Run install_all.bat first.
+  pause
+  exit /b 1
 )
-set "VPY=venv\Scripts\python.exe"
+set "PY=venv\Scripts\python.exe"
+set "HF_HUB_DISABLE_TELEMETRY=1"
+set "HF_HUB_DOWNLOAD_TIMEOUT=900"
+set "HF_HUB_ETAG_TIMEOUT=60"
+set "TOKENIZERS_PARALLELISM=false"
+set "PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True"
 
-if /I "%~1"=="force" goto :torch_force
-echo Checking PyTorch / GPU...
-"%VPY%" -c "import torch,sys; sys.exit(0 if torch.cuda.is_available() else 1)" 2>nul
-if not errorlevel 1 goto :torch_have
-echo Installing PyTorch with CUDA GPU support ^(only 'torch' is replaced^)...
-"%VPY%" -m pip uninstall -y torch >nul 2>nul
-goto :torch_attempt
-:torch_force
-echo Forcing a clean PyTorch reinstall...
-"%VPY%" -m pip install --force-reinstall --no-cache-dir torch --index-url https://download.pytorch.org/whl/cu128
-if not errorlevel 1 goto :torch_done
-"%VPY%" -m pip install --force-reinstall --no-cache-dir torch --index-url https://download.pytorch.org/whl/cu124
-if not errorlevel 1 goto :torch_done
-"%VPY%" -m pip install torch
-goto :torch_done
-:torch_attempt
-"%VPY%" -m pip install torch --index-url https://download.pytorch.org/whl/cu128
-if not errorlevel 1 goto :torch_done
-echo CUDA 12.8 unavailable - trying CUDA 12.4...
-"%VPY%" -m pip install torch --index-url https://download.pytorch.org/whl/cu124
-if not errorlevel 1 goto :torch_done
-echo Installing CPU-only PyTorch ^(slower^)...
-"%VPY%" -m pip install torch
-goto :torch_done
-:torch_have
-echo PyTorch with a working CUDA GPU already present - skipping it.
-echo ^(To force a clean reinstall: install_stable_diffusion.bat force^)
-:torch_done
+if /I "%~1"=="force" "%PY%" -m pip uninstall -y torch torchvision torchaudio
+"%PY%" -c "import torch,sys; sys.exit(0 if torch.cuda.is_available() else 1)" 2>nul
+if errorlevel 1 (
+  "%PY%" -m pip install --upgrade torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
+  if errorlevel 1 goto :fail
+)
+"%PY%" -m pip install -r requirements.txt
+if errorlevel 1 goto :fail
+"%PY%" -c "import torch,sys; ok=torch.cuda.is_available(); print('PyTorch',torch.__version__); print('CUDA',ok); print('GPU',torch.cuda.get_device_name(0) if ok else 'NOT AVAILABLE'); sys.exit(0 if ok else 1)"
+if errorlevel 1 goto :fail
 
-echo.
-echo Installing diffusers stack...
-"%VPY%" -m pip install diffusers transformers accelerate safetensors
+"%PY%" "install_models.py" --model default
+if errorlevel 1 goto :fail
+choice /C YN /N /M "Install/repair the optional Photorealistic model too? [Y/N] "
+if errorlevel 2 goto :done
+"%PY%" "install_models.py" --model photoreal
+if errorlevel 1 goto :fail
 
+:done
 echo.
-"%VPY%" -c "import torch; ok=torch.cuda.is_available(); print('PyTorch', torch.__version__); print('GPU available:', ok); print('GPU:', torch.cuda.get_device_name(0) if ok else 'CPU only')"
-echo.
-echo Done. Start SeeStory with run.bat.
+echo Local model repair and GPU verification completed.
+echo See logs\model-install.log for details.
 pause
+exit /b 0
+
+:fail
+echo.
+echo Model repair failed. Review logs\model-install.log.
+pause
+exit /b 1
 ```
 
-### `setup_copilot.bat`
+## Validation before release
 
-Optional. Installs the Copilot library's dependencies and runs the one‑time Microsoft sign‑in.
+Review `CHANGELOG.md`, then run:
 
-```bat
-@echo off
-setlocal enableextensions
-cd /d "%~dp0"
-title SeeStory - set up Copilot backend
-
-set "REPO=Windows-Copilot-API"
-
-echo.
-echo =====================================================================
-echo  SeeStory: Copilot backend setup
-echo  Adds Microsoft Copilot image generation as the premium source for the
-echo  standout moments. Optional - SeeStory works fine without it.
-echo  The library is bundled with SeeStory; this just installs its Python
-echo  dependencies and signs you in.
-echo  Repo: https://github.com/sums001/Windows-Copilot-API
-echo =====================================================================
-echo.
-
-if not exist "venv\Scripts\python.exe" goto :no_venv
-set "VPY=venv\Scripts\python.exe"
-
-if exist "%REPO%\copilot" goto :have_repo
-echo ERROR: the bundled Windows-Copilot-API folder is missing. Re-extract the
-echo SeeStory download (it should contain a "Windows-Copilot-API" folder).
-goto :end
-:have_repo
-echo [1/3] Library found: %CD%\%REPO%
-echo.
-
-echo [2/3] Installing its Python requirements (already-installed ones are skipped)...
-"%VPY%" -m pip install -r "%REPO%\requirements.txt"
-if errorlevel 1 goto :pip_fail
-echo.
-echo       Installing the Playwright Chromium browser for sign-in (skipped if present)...
-"%VPY%" -m playwright install chromium
-echo.
-
-if exist "session\token.json" goto :login_skip
-echo [3/3] Microsoft sign-in
-echo.
-echo   A Google Chrome window will open at copilot.microsoft.com.
-echo   Sign in to your Microsoft account and pass any "verify you're human"
-echo   check. The window CLOSES BY ITSELF once sign-in is detected - you do
-echo   not need to press anything here.
-echo.
-echo   Press a key when you're ready to open the sign-in window...
-pause >nul
-"%VPY%" -m app.copilot_login
-goto :ready
-:login_skip
-echo [3/3] Already signed in - existing session found, skipping sign-in.
-echo       To sign in again later, run  login_copilot.bat
-:ready
-
-echo.
-echo =====================================================================
-echo  Copilot backend is ready.
-echo  Start (or restart) SeeStory with run.bat - the "copilot" badge in the
-echo  header should turn green. Click "Test Copilot" there to confirm.
-echo.
-echo  Remember: Copilot is auto-capped and spaced so your account is never
-echo  hammered. Choose "Both" or "Copilot only" mode in the app to use it.
-echo =====================================================================
-goto :end
-
-:no_venv
-echo Please run setup.bat first to create the SeeStory environment.
-goto :end
-:pip_fail
-echo.
-echo ERROR: installing the API's requirements failed. Scroll up for the reason.
-goto :end
-
-:end
-echo.
-pause
+```text
+python -m compileall app tests launch_seestory.pyw stop_seestory.py shutdown_diagnostic.py
+python -m unittest discover -s tests -v
 ```
 
-### `login_copilot.bat`
-
-Optional. Re‑runs the Copilot Microsoft sign‑in (refreshes the session).
-
-```bat
-@echo off
-setlocal enableextensions
-cd /d "%~dp0"
-title SeeStory - Copilot sign-in
-
-if not exist "venv\Scripts\python.exe" (
-    echo Run setup.bat first to create the SeeStory environment.
-    echo.
-    pause
-    exit /b 1
-)
-if not exist "Windows-Copilot-API\copilot" (
-    echo The bundled Windows-Copilot-API folder is missing - re-extract the
-    echo SeeStory download, then run setup.bat.
-    echo.
-    pause
-    exit /b 1
-)
-echo Making sure the Copilot dependencies are installed...
-"venv\Scripts\python.exe" -m pip install -q -r "Windows-Copilot-API\requirements.txt" >nul 2>nul
-"venv\Scripts\python.exe" -m playwright install chromium >nul 2>nul
-
-echo Opening Google Chrome for Microsoft / Copilot sign-in.
-echo The window closes by itself once you're signed in - nothing to press here.
-echo.
-"venv\Scripts\python.exe" -m app.copilot_login
-
-echo.
-echo If SeeStory is open, restart it with run.bat so it picks up the session.
-pause
-```
-
-## Notes (encoding & line endings)
-
-- **Line endings:** save as **CRLF**. `cmd.exe` mostly tolerates LF, but a few constructs (labels, multi‑line blocks) are happier with CRLF.
-- **Encoding:** ANSI or UTF‑8 without BOM. A UTF‑8 BOM can make `cmd` choke on the first line.
-- **SmartScreen:** the first time you double‑click a `.bat`, Windows may warn. Choose *More info → Run anyway* (or unblock it in the file's Properties).
-- **Paths:** every launcher does `cd /d "%~dp0"`, so they work from wherever the SeeStory folder lives — just keep them in the SeeStory root next to `app/`.
+On Windows, also run `check_gpu.bat`, launch from the desktop shortcut, verify a real sample image, build a short MP4, and verify that closing the app window leaves no SeeStory Python process behind.

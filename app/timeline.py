@@ -24,6 +24,12 @@ from typing import List, Optional
 
 # ── audio + timestamp parsing ────────────────────────────────────────────
 
+def _no_window_kwargs():
+    if os.name == "nt":
+        return {"creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)}
+    return {}
+
+
 _TS_LINE = re.compile(r"^\s*(?:(\d+):)?(\d{1,2}):(\d{2})\s+(.*\S)\s*$")
 
 
@@ -50,7 +56,7 @@ def audio_duration_ms(path: str) -> int:
         r = subprocess.run(
             ["ffprobe", "-v", "quiet", "-show_entries", "format=duration",
              "-of", "csv=p=0", path],
-            capture_output=True, text=True)
+            capture_output=True, text=True, **_no_window_kwargs())
         if r.returncode == 0 and r.stdout.strip():
             return int(float(r.stdout.strip()) * 1000)
     except Exception:
@@ -173,9 +179,6 @@ class Shot:
     word_count: int = 0
     # filled in later by the director / image generator / UI
     prompt: str = ""
-    backend: str = "stablediffusion"   # 'stablediffusion' | 'copilot' | 'placeholder'
-    highlight_score: float = 0.0
-    highlighted: bool = False          # routed to Copilot (high quality)
     image_path: Optional[str] = None
     status: str = "pending"            # pending | generating | done | error | skipped
     error: str = ""

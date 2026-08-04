@@ -15,6 +15,8 @@ from bs4 import BeautifulSoup, XMLParsedAsHTMLWarning
 from ebooklib import epub
 import ebooklib
 
+from .html_text import clean_html_to_text as _clean_html_to_text
+
 warnings.filterwarnings("ignore", category=XMLParsedAsHTMLWarning)
 
 
@@ -35,33 +37,6 @@ class ParsedBook:
 
 # Headings we treat as a likely chapter start when auto-detecting.
 _HEADING_TAGS = ("h1", "h2", "h3")
-
-
-def _clean_html_to_text(html: str) -> str:
-    """Strip tags and collapse whitespace, keeping paragraph breaks."""
-    soup = BeautifulSoup(html, "lxml")
-
-    for bad in soup(["script", "style"]):
-        bad.decompose()
-
-    # Turn block elements into newline-separated text so paragraphs survive.
-    for br in soup.find_all("br"):
-        br.replace_with("\n")
-
-    blocks = []
-    for el in soup.find_all(["p", "div", "h1", "h2", "h3", "h4", "h5", "h6", "li"]):
-        chunk = el.get_text(" ", strip=True)
-        if chunk:
-            blocks.append(chunk)
-
-    if not blocks:
-        # Fallback: whole-document text.
-        blocks = [soup.get_text(" ", strip=True)]
-
-    text = "\n\n".join(blocks)
-    text = re.sub(r"[ \t]+", " ", text)
-    text = re.sub(r"\n{3,}", "\n\n", text)
-    return text.strip()
 
 
 def _ordered_documents(book):

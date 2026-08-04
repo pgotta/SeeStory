@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,600;0,9..144,900;1,9..144,400&family=Spline+Sans:wght@400;600&family=Spline+Sans+Mono:wght@400;600&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
-<link rel="icon" href="{{ url_for('static', filename='owl.svg') }}">
+<link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='seestory-icon.svg') }}">
 </head>
 <body>
 <div class="haze"></div>
@@ -36,36 +36,6 @@
     <h1><span class="see">See</span>Story</h1>
   </div>
   <p class="tagline">Bring your narrated audiobook to life.</p>
-  <div class="badges">
-    <span class="badge {{ 'on' if ffmpeg_ok else 'off' }}">ffmpeg {{ 'ready' if ffmpeg_ok else 'missing' }}</span>
-    <span class="badge {{ 'on' if probe.stablediffusion else 'off' }}">stable diffusion {{ 'ready' if probe.stablediffusion else 'not installed' }}</span>
-    {% if probe.stablediffusion %}<span class="badge {{ 'on' if probe.cuda else 'warn' }}">{{ 'GPU' if probe.cuda else 'CPU only' }}</span>{% endif %}
-    {% if probe.copilot and probe.copilot_signed_in %}<span class="badge on">copilot signed in</span>
-    {% elif probe.copilot %}<span class="badge warn">copilot — sign in (run login_copilot.bat)</span>
-    {% else %}<span class="badge off">copilot not set up</span>{% endif %}
-    <span class="badge on">placeholder always on</span>
-  </div>
-  {% if probe.copilot and not probe.copilot_signed_in %}
-  <p class="signin-note">Copilot is installed but <b>not signed in</b> — run
-    <code>login_copilot.bat</code>, then restart SeeStory. Until then, premium
-    shots fall back to Stable Diffusion.</p>
-  {% endif %}
-  {% if probe.copilot %}
-  <div class="copilot-tools">
-    <button class="ghost small" id="btn-test-copilot">Test Copilot</button>
-    <span class="ctest-result" id="copilot-test-result"></span>
-    <button class="link" id="copilot-help-toggle">Copilot not working?</button>
-  </div>
-  <div class="copilot-help hidden" id="copilot-help">
-    <b>If the Copilot test fails:</b>
-    <ol>
-      <li><b>Not signed in / clearance:</b> run <code>login_copilot.bat</code>, finish the Microsoft sign-in, then restart SeeStory and test again.</li>
-      <li><b>"invalid-event" or another protocol error:</b> Microsoft changed Copilot and the bundled <code>Windows-Copilot-API</code> library is out of date. Replace the <code>Windows-Copilot-API\copilot</code> folder with the latest from <a href="https://github.com/sums001/Windows-Copilot-API" target="_blank" rel="noopener">the repo</a> (or ask its author), then restart.</li>
-      <li><b>Region blocked / chat-service-unavailable:</b> Copilot's chat isn't available in your region right now.</li>
-      <li>Whatever happens, SeeStory keeps working — it just uses Stable Diffusion for the premium shots instead.</li>
-    </ol>
-  </div>
-  {% endif %}
 </header>
 
 <main>
@@ -113,23 +83,8 @@
     <textarea class="ts-paste" id="ts-paste" placeholder="…or paste the chapter lines here, e.g.&#10;00:00 Chapter One&#10;04:12 Chapter Two&#10;09:40 Chapter Three"></textarea>
 
     <div class="step-head" style="margin-top:30px"><span class="num">ii</span><h2>How it should look</h2></div>
-    <p class="hint">Stable Diffusion draws every page on your own GPU (free, unlimited). Copilot is saved for the
-      standout moments — gorgeous, but rate-limited, so it's capped to protect your account.</p>
-
-    <div class="field" style="margin:8px 0 16px">
-      <label>image sources</label>
-      <div class="mode-cards" id="mode-cards">
-        <div class="mode-card sel" data-mode="both">
-          <div class="mc-t">Both</div><div class="mc-s">SD every page · Copilot for the big moments</div>
-        </div>
-        <div class="mode-card" data-mode="sd_only">
-          <div class="mc-t">Stable Diffusion only</div><div class="mc-s">no account, fully local</div>
-        </div>
-        <div class="mode-card" data-mode="copilot_only">
-          <div class="mc-t">Copilot only</div><div class="mc-s">premium, capped &amp; spaced</div>
-        </div>
-      </div>
-    </div>
+    <p class="hint">SeeStory generates every image locally on your NVIDIA GPU. Pick the visual style and
+      how often the scene changes; the image model, quality settings, and anatomy cleanup are handled automatically.</p>
 
     <div class="settings">
       <div class="field">
@@ -144,20 +99,12 @@
             'ink': 'Ink & watercolor'} %}
           {% for s in styles %}<option value="{{ s }}"{% if s == 'cinematic' %} selected{% endif %}>{{ labels.get(s, s) }}</option>{% endfor %}
         </select>
-        <p class="muted" style="margin:4px 0 0">Pick <b>Photorealistic</b> for real-looking photos instead of a drawing. The first time you use it, it downloads a photo-quality model (~6 GB), then it's cached.</p>
+        <p class="muted" style="margin:4px 0 0">Pick <b>Photorealistic</b> for a real-camera look. That optional model must be selected and GPU-tested during <code>install_all.bat</code>.</p>
       </div>
       <div class="field">
         <label for="custom_style">custom style (optional — overrides the preset)</label>
         <input id="custom_style" type="text" placeholder="e.g. 1950s noir comic, ink and gouache">
         <p class="muted" style="margin:4px 0 0">Describe the <b>visual art style only</b> — medium, palette, mood. Don't put the plot, genre, author, or the word "book" here; words like "book" or a title make the pictures come out with garbled text on them.</p>
-      </div>
-      <div class="field">
-        <label for="sd_guidance">image cleanup <span class="help" tabindex="0" title="How hard Stable Diffusion works to follow the prompt and avoid stray text, watermarks and double-faces. Only affects Stable Diffusion images, not Copilot.&#10;&#10;• Cleaner (recommended): removes most accidental text and duplicate faces. A little slower.&#10;• Classic turbo: fastest, the original look — but text and double-faces can slip in.&#10;• Strong: strongest cleanup and prompt adherence; slowest, can look slightly oversaturated.">ⓘ</span></label>
-        <select id="sd_guidance">
-          <option value="1.6" selected>Cleaner — remove stray text &amp; double-faces (recommended)</option>
-          <option value="0">Classic turbo — fastest, original look</option>
-          <option value="3.0">Strong — strongest cleanup (slower)</option>
-        </select>
       </div>
       <div class="field">
         <label for="words_per_page">words per page (how often the picture changes)</label>
@@ -168,18 +115,8 @@
         <label for="pages_per_shot">pages per image</label>
         <input id="pages_per_shot" type="number" value="1" min="1" max="20">
       </div>
-      <div class="field" id="cop-every-wrap">
-        <label for="copilot_every_pages">copilot: roughly one per N pages</label>
-        <input id="copilot_every_pages" type="number" value="10" min="2" max="200">
-      </div>
-      <div class="field" id="cop-cap-wrap">
-        <label for="copilot_cap">copilot: hard cap per book (anti-throttle)</label>
-        <input id="copilot_cap" type="number" value="30" min="1" max="200">
-      </div>
-    </div>
-
-        <div class="field">
-      <label for="subtitle_mode">subtitles</label>
+      <div class="field">
+        <label for="subtitle_mode">subtitles</label>
       <select id="subtitle_mode">
         <option value="none" selected>off</option>
         <option value="soft">on — toggleable track (viewers can turn on/off)</option>
@@ -188,14 +125,15 @@
       <div class="sub-upload hidden" id="sub-upload">
         <label class="sub-file" for="file-subtitle" id="ds-subtitle">
           ＋ Add Parroty's subtitle file (.srt) for exact timing</label>
-        <input id="file-subtitle" type="file" accept=".srt,.vtt" hidden>
+        <input id="file-subtitle" type="file" accept=".srt" hidden>
         <div class="sub-note">Leave blank and SeeStory will auto-generate approximate subtitles from the ebook text (good for Parroty's steady narration, but not frame-perfect).</div>
+      </div>
       </div>
     </div>
 
     <div class="sample-row">
       <button class="ghost" id="btn-sample">✨ Generate a sample image</button>
-      <span class="muted" id="sample-hint">Draws one random page with Stable Diffusion so you can preview the style. First run loads the model (can take a minute).</span>
+      <span class="muted" id="sample-hint">Draws one random page locally using the model installed and GPU-tested by install_all.bat.</span>
     </div>
     <div class="sample hidden" id="sample-panel">
       <div class="sample-text">
@@ -265,8 +203,7 @@
   <!-- STEP 3 — GENERATE -->
   <section class="step hidden" id="step-generate">
     <div class="step-head"><span class="num">iv</span><h2>Generating</h2></div>
-    <p class="hint" id="gen-hint">Drawing each shot in order. Copilot shots wait a few seconds between calls
-      on purpose — that's the throttle that keeps your account happy.</p>
+    <p class="hint" id="gen-hint">Drawing each shot locally in order. Finished shots are saved as they complete, so a resumed session skips work that is already done.</p>
     <div class="pbar"><div class="pbar-fill" id="gen-fill"></div><div class="pbar-label" id="gen-label">0%</div></div>
     <div class="err" id="gen-err"></div>
     <details class="buildlog" id="buildlog" open>
@@ -293,7 +230,7 @@
       <h4 class="restable-title">Scene breakdown</h4>
       <div class="restable-wrap">
         <table class="restable" id="restable">
-          <thead><tr><th>#</th><th>Chapter</th><th>Start–End</th><th>Source</th><th>Status</th></tr></thead>
+          <thead><tr><th>#</th><th>Chapter</th><th>Start–End</th><th>Status</th></tr></thead>
           <tbody id="restable-body"></tbody>
         </table>
       </div>
@@ -302,17 +239,28 @@
 </main>
 
 <footer>
-  Made beside <a href="https://github.com/pgotta/Parroty" target="_blank" rel="noopener">Parroty</a> · runs entirely on your machine · nothing leaves this computer except, if you choose it, the prompts sent to Copilot.
+  Made beside <a href="https://github.com/pgotta/Parroty" target="_blank" rel="noopener">Parroty</a> · runs entirely on your machine · image prompts and book content stay local.
 </footer>
+
+<aside class="system-monitor" id="system-monitor" aria-label="System monitor">
+  <div class="sm-head"><span class="sm-dot"></span><b>system</b><span class="sm-priority">HIGH priority</span></div>
+  <div class="sm-grid">
+    <span>CPU</span><strong id="sm-cpu">—</strong>
+    <span>RAM</span><strong id="sm-ram">—</strong>
+    <span>GPU</span><strong id="sm-gpu">—</strong>
+    <span>VRAM</span><strong id="sm-vram">—</strong>
+    <span>GPU temp</span><strong id="sm-temp">—</strong>
+  </div>
+</aside>
 
 <script>
   window.SEESTORY = {
     presets: {{ presets|tojson }},
     styles: {{ styles|tojson }},
-    defaultMotion: {{ default_motion|tojson }},
-    probe: {{ probe|tojson }}
+    defaultMotion: {{ default_motion|tojson }}
   };
 </script>
 <script src="{{ url_for('static', filename='app.js') }}"></script>
+
 </body>
 </html>

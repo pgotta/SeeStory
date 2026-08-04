@@ -20,6 +20,7 @@ import re
 import warnings
 
 from .epub_parser import Chapter, ParsedBook
+from .html_text import semantic_blocks
 
 
 # ---- shared heading heuristics ------------------------------------------
@@ -205,13 +206,9 @@ def _parse_html(path: str, title: str) -> ParsedBook:
         bad.decompose()
     doc_title = (soup.title.get_text(strip=True) if soup.title else "") or title
 
-    blocks, flags = [], []
-    for el in soup.find_all(["h1", "h2", "h3", "h4", "p", "div", "li"]):
-        text = el.get_text(" ", strip=True)
-        if not text:
-            continue
-        blocks.append(text)
-        flags.append(el.name in ("h1", "h2", "h3", "h4"))
+    pairs = semantic_blocks(soup)
+    blocks = [text for text, _is_heading in pairs]
+    flags = [is_heading for _text, is_heading in pairs]
     chapters = _chapters_from_blocks(blocks, flags)
     return ParsedBook(title=doc_title, author="", chapters=chapters)
 
@@ -227,7 +224,10 @@ def _parse_doc(path: str, title: str) -> ParsedBook:
         # Try antiword via subprocess if installed.
         try:
             import subprocess
-            out = subprocess.run(["antiword", path], capture_output=True)
+            kwargs = {}
+            if os.name == "nt":
+                kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+            out = subprocess.run(["antiword", path], capture_output=True, **kwargs)
             if out.returncode == 0:
                 text = out.stdout.decode("utf-8", errors="replace")
         except Exception:

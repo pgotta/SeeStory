@@ -58,15 +58,6 @@ a { color: var(--beam); }
   font-family: var(--serif); font-style: italic; font-size: 1.1rem;
   color: var(--screen-soft); margin: 12px 0 0;
 }
-.badges { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; margin-top: 18px; }
-.badge {
-  font-family: var(--mono); font-size: .7rem; text-transform: uppercase;
-  letter-spacing: .05em; padding: 4px 10px; border-radius: 20px;
-  border: 1px solid var(--rule); color: var(--screen-soft); background: var(--panel);
-}
-.badge.on { color: var(--ok); border-color: rgba(121,178,119,.5); }
-.badge.off { color: var(--screen-soft); opacity: .6; }
-.badge.warn { color: var(--warn); border-color: rgba(221,154,78,.5); }
 
 /* ---- Steps ------------------------------------------------------------- */
 main { max-width: 1080px; margin: 0 auto; padding: 8px 28px 90px; }
@@ -109,12 +100,6 @@ main { max-width: 1080px; margin: 0 auto; padding: 8px 28px 90px; }
   font-family: var(--sans); font-size: .92rem; padding: 9px 11px;
   border: 1px solid var(--rule); border-radius: 6px; background: var(--panel-2); color: var(--screen);
 }
-.mode-cards { display: flex; gap: 10px; }
-.mode-card { flex: 1; border: 1.5px solid var(--rule); border-radius: 7px; padding: 12px;
-  cursor: pointer; background: var(--panel); text-align: center; }
-.mode-card.sel { border-color: var(--beam); box-shadow: 0 0 0 1px var(--beam); }
-.mode-card .mc-t { font-family: var(--serif); font-weight: 600; }
-.mode-card .mc-s { font-size: .74rem; color: var(--screen-soft); margin-top: 3px; }
 
 /* ---- Buttons ----------------------------------------------------------- */
 button { font-family: var(--sans); cursor: pointer; }
@@ -142,7 +127,6 @@ button { font-family: var(--sans); cursor: pointer; }
   border-image: repeating-linear-gradient(90deg, var(--rule) 0 8px, transparent 8px 16px) 6;
 }
 .shot.chapter-start { box-shadow: inset 3px 0 0 var(--beam); }
-.shot.is-copilot { border-color: rgba(232,162,60,.5); }
 .thumb { position: relative; aspect-ratio: 16/9; background: var(--room-deep);
   display: grid; place-items: center; overflow: hidden; }
 .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
@@ -152,11 +136,6 @@ button { font-family: var(--sans); cursor: pointer; }
 @keyframes sp { to { transform: rotate(360deg); } }
 .thumb .ttime { position: absolute; left: 8px; bottom: 8px; font-family: var(--mono);
   font-size: .68rem; background: rgba(0,0,0,.55); color: var(--screen); padding: 2px 7px; border-radius: 4px; }
-.thumb .tbk { position: absolute; right: 8px; top: 8px; font-family: var(--mono);
-  font-size: .62rem; text-transform: uppercase; letter-spacing: .05em; padding: 2px 7px;
-  border-radius: 4px; background: rgba(0,0,0,.55); }
-.tbk.copilot { color: var(--beam); } .tbk.stablediffusion { color: var(--glow); }
-.tbk.placeholder { color: var(--screen-soft); }
 
 .shot-body { padding: 12px 13px 14px; display: flex; flex-direction: column; gap: 10px; }
 .shot-chap { font-family: var(--mono); font-size: .68rem; color: var(--screen-soft);
@@ -167,10 +146,6 @@ button { font-family: var(--sans); cursor: pointer; }
 .shot-prompt:focus { outline: none; border-color: var(--beam); }
 
 .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-.seg { display: flex; border: 1px solid var(--rule); border-radius: 6px; overflow: hidden; }
-.seg button { background: var(--panel-2); border: none; color: var(--screen-soft);
-  padding: 5px 9px; font-family: var(--mono); font-size: .68rem; }
-.seg button.on { background: var(--beam); color: #1a1206; }
 
 .motion { border-top: 1px dashed var(--rule); padding-top: 10px; display: none; flex-direction: column; gap: 9px; }
 .motion.open { display: flex; }
@@ -269,9 +244,6 @@ footer { max-width: 1080px; margin: 0 auto; padding: 28px; text-align: center;
   letter-spacing: .06em; color: var(--beam); border: 1px solid var(--beam);
   border-radius: 6px; padding: 1px 5px; margin-left: 6px; opacity: .8; }
 
-/* standalone source badges (sample meta + results table) */
-.sample-meta .tbk, .restable .tbk { font-family: var(--mono); font-size: 10px;
-  text-transform: uppercase; letter-spacing: .04em; position: static; }
 
 /* ── resume / restore bar ───────────────────────────────────────────────── */
 .resume { background: var(--panel); border: 1px solid var(--beam-deep);
@@ -335,17 +307,12 @@ footer { max-width: 1080px; margin: 0 auto; padding: 28px; text-align: center;
 .gm-head .gm-master { margin-bottom: 0; }
 #btn-apply-motion-all { white-space: nowrap; }
 
-/* sign-in reminder under the badges */
-.signin-note { margin: 8px 0 0; font-size: .82rem; color: var(--beam);
-  background: rgba(214,178,106,.08); border: 1px solid rgba(214,178,106,.3);
-  border-radius: 8px; padding: 7px 11px; max-width: 760px; }
-.signin-note code { font-family: var(--mono); font-size: .92em; }
 
-/* transient toast (e.g. why a single regenerate fell back) */
+/* transient toast for local errors and confirmations */
 .toast { position: fixed; bottom: 22px; left: 50%;
   transform: translateX(-50%) translateY(18px);
   background: var(--panel-2); color: var(--screen);
-  border: 1px solid var(--line); border-radius: 10px; padding: 11px 16px;
+  border: 1px solid var(--rule); border-radius: 10px; padding: 11px 16px;
   max-width: 560px; font-size: .85rem; line-height: 1.35;
   box-shadow: 0 10px 34px rgba(0,0,0,.55); opacity: 0;
   transition: opacity .35s, transform .35s; z-index: 1000; }
@@ -356,28 +323,30 @@ footer { max-width: 1080px; margin: 0 auto; padding: 28px; text-align: center;
 .resume-head-actions { display: flex; gap: 14px; align-items: center; }
 .link.danger:hover { color: #d98a7a; }
 .ri-actions { display: flex; align-items: center; gap: 8px; }
-.ri-del { background: transparent; border: 1px solid var(--line);
+.ri-del { background: transparent; border: 1px solid var(--rule);
   color: var(--screen-soft); border-radius: 6px; width: 26px; height: 26px;
   cursor: pointer; font-size: .78rem; line-height: 1; padding: 0; }
 .ri-del:hover { border-color: #d98a7a; color: #d98a7a; }
 
-/* Copilot test + troubleshooting */
-.copilot-tools { display: flex; align-items: center; gap: 12px; margin: 8px 0 0;
-  flex-wrap: wrap; }
-.ctest-result { font-size: .82rem; color: var(--screen-soft); }
-.ctest-result.ok { color: var(--glow); }
-.ctest-result.warn { color: var(--beam); }
-.copilot-help { margin: 8px 0 0; font-size: .82rem; color: var(--screen-soft);
-  background: rgba(255,255,255,.03); border: 1px solid var(--line);
-  border-radius: 8px; padding: 8px 12px 8px 4px; max-width: 760px; }
-.copilot-help ol { margin: 6px 0 0; padding-left: 22px; }
-.copilot-help li { margin: 4px 0; line-height: 1.4; }
-.copilot-help code { font-family: var(--mono); }
-.copilot-help a { color: var(--beam); }
 
-/* inline help icon with hover tooltip */
-.help { display: inline-block; width: 16px; height: 16px; line-height: 16px;
-  text-align: center; border-radius: 50%; font-size: 11px; cursor: help;
-  color: var(--screen-soft); border: 1px solid var(--line); margin-left: 4px;
-  white-space: pre-line; }
-.help:hover, .help:focus { color: var(--beam); border-color: var(--beam); outline: none; }
+
+/* SeeStory desktop system monitor ----------------------------------------- */
+.system-monitor {
+  position: fixed; left: 14px; bottom: 14px; z-index: 80;
+  width: 218px; padding: 10px 11px 9px;
+  border: 1px solid rgba(232,162,60,.38); border-radius: 12px;
+  background: rgba(14,11,9,.90); box-shadow: 0 12px 40px rgba(0,0,0,.44);
+  backdrop-filter: blur(12px); color: var(--cream, #ece0c8);
+  font: 11px/1.35 "Spline Sans Mono", ui-monospace, monospace;
+  user-select: none; transition: opacity .2s, border-color .2s;
+}
+.system-monitor.offline { opacity: .55; }
+.system-monitor.gpu-active { border-color: rgba(91,210,188,.70); }
+.sm-head { display: flex; align-items: center; gap: 7px; margin-bottom: 7px; text-transform: uppercase; letter-spacing: .08em; }
+.sm-dot { width: 7px; height: 7px; border-radius: 50%; background: #e8a23c; box-shadow: 0 0 9px rgba(232,162,60,.9); }
+.gpu-active .sm-dot { background: #5bd2bc; box-shadow: 0 0 9px rgba(91,210,188,.9); }
+.sm-priority { margin-left: auto; color: #cfaa73; font-size: 9px; letter-spacing: .04em; }
+.sm-grid { display: grid; grid-template-columns: 66px 1fr; gap: 3px 9px; }
+.sm-grid span { color: #9e8e7a; }
+.sm-grid strong { color: #f3dfb8; font-weight: 600; text-align: right; white-space: nowrap; }
+@media (max-width: 760px) { .system-monitor { display: none; } }
