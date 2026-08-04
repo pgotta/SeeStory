@@ -2,6 +2,17 @@
 
 This document is the source of truth for rebuilding the Windows helper files that are intentionally excluded from git. The release/test ZIP may contain these BAT files for convenience, but the repository keeps `*.bat`, `*.cmd`, and `*.lnk` ignored.
 
+## Quick start
+
+The GitHub repository intentionally does not include executable Windows launcher files. Use the downloadable release package, or recreate the required launchers from the exact code blocks in this document.
+
+1. Place the complete SeeStory project in a normal writable folder.
+2. Run **`install_all.bat`**. This is the supported first-time setup entry point. It creates the Python environment, installs and verifies CUDA, checks ffmpeg, downloads and GPU-tests the required local model, optionally installs the Photorealistic model, and creates the desktop shortcut.
+3. After setup completes, start SeeStory from the desktop shortcut or with **`run.bat`**.
+4. Close the dedicated SeeStory window to stop the background service. Use **`stop.bat`** only when an explicit manual stop is needed.
+
+For non-interactive setup, `install_all.bat default` installs only the required illustration model, while `install_all.bat all` installs both the illustration and Photorealistic models.
+
 ## Build/runtime layout
 
 - `launch_seestory.pyw` — hidden desktop launcher. Starts Flask with `pythonw.exe`, waits for readiness, opens the tracked Chrome/Edge app window, and shuts the server down when that window closes.

@@ -8,15 +8,11 @@ SeeStory opens as a desktop-style Windows app in a dedicated maximized Chrome or
 
 ![SeeStory desktop interface](screenshots/header.png)
 
-## Windows quick start
+## Quick start
 
-1. Extract the complete SeeStory folder to a normal writable location.
-2. Double-click **`install_all.bat`**.
-3. Let the installer create the Python environment, install CUDA-enabled PyTorch, download and verify the required local image model, check ffmpeg, and create the desktop shortcut.
-4. Choose whether to install the optional Photorealistic model when prompted.
-5. Start SeeStory from the desktop shortcut or with **`run.bat`**.
+See **[BUILD.md](BUILD.md)** for quick start, installation, launcher creation, model repair, manual shutdown, and diagnostic instructions.
 
-Closing the dedicated SeeStory app window performs the same controlled shutdown as **`stop.bat`**.
+Windows launcher files are intentionally excluded from the repository. `BUILD.md` is the source of truth for recreating them and explains which launcher to use for the initial setup. The downloadable release package includes the Windows launchers for convenience.
 
 Have these Parroty files ready:
 
@@ -29,14 +25,14 @@ SeeStory also accepts EPUB, PDF, DOC, DOCX, TXT, Markdown, HTML, and RTF documen
 ## Requirements and disk space
 
 - Windows 10 or Windows 11.
-- Python 3.12 for the Windows installer.
-- An NVIDIA CUDA GPU. Installation stops if real CUDA execution cannot be proven.
-- ffmpeg for motion clips and final video assembly. The installer checks for it and provides a clear error if it is missing.
+- Python 3.12 for the Windows setup documented in `BUILD.md`.
+- An NVIDIA CUDA GPU. Setup stops if real CUDA execution cannot be proven.
+- ffmpeg for motion clips and final video assembly. The setup process checks for it and reports clearly when it is missing.
 - Enough free disk space for the Python environment, local model cache, and generated projects.
 
 The required DreamShaper XL Lightning model is roughly 7 GB. The optional RealVisXL Photorealistic model is a separate download of roughly similar size. The Python environment and CUDA libraries use several additional gigabytes, and long-book output folders can also grow to several gigabytes.
 
-The installer does not permit a silent CPU fallback. The current release has been tested on Windows 11 with an RTX 5060 Laptop GPU with 8 GB of VRAM.
+The setup process does not permit a silent CPU fallback. The current release has been tested on Windows 11 with an RTX 5060 Laptop GPU with 8 GB of VRAM.
 
 ## Local image generation
 
@@ -44,8 +40,8 @@ SeeStory has one local image-generation path with automatic model routing. There
 
 - **DreamShaper XL Lightning** handles Cinematic, Storybook, Noir, Oil, Ink, and other illustrated styles.
 - **RealVisXL V5 Lightning** handles the Photorealistic style when that optional model was installed and GPU-tested.
-- The installer owns all large model downloads. The running app is cache-only and cannot silently begin a multi-gigabyte model transfer.
-- Missing or incomplete models produce an immediate instruction to rerun the installer.
+- The setup process documented in `BUILD.md` owns all large model downloads. The running app is cache-only and cannot silently begin a multi-gigabyte model transfer.
+- Missing or incomplete models produce an immediate repair message. Follow the model-repair instructions in `BUILD.md`.
 - Prompt construction includes scene-coherence, anatomy, duplicate-person, malformed-face, extra-limb, extra-finger, watermark, and accidental-text suppression.
 - Lower-VRAM systems can use model CPU offload and smaller retry resolutions after a CUDA out-of-memory error.
 - Model weights are not included in this repository or release package and remain subject to their upstream licenses.
@@ -58,7 +54,7 @@ Choose the art style, optional custom visual treatment, words per page, pages pe
 
 ![Photorealistic setup and sample](screenshots/setup-photoreal.png)
 
-The optional Photorealistic model must be selected during `install_all.bat`. If it was not installed, rerun the installer or use `install_stable_diffusion.bat` to add and verify it.
+The optional Photorealistic model must be added and GPU-tested during Windows setup. See `BUILD.md` for the setup and model-repair instructions.
 
 ![Storybook watercolor example](screenshots/style-storybook.png)
 
@@ -113,7 +109,7 @@ This is controlled Ken Burns-style movement on still images, not generative vide
 - Tracks the dedicated app process and uses a heartbeat fallback for clean shutdown.
 - Writes launcher, server, lifecycle, installation, and diagnostic information under `logs/`.
 
-If closing the app window ever leaves SeeStory running, run **`shutdown_diagnostic.bat`** before manually ending the process. It creates a timestamped report containing listener, PID, session, GPU, and recent-log information.
+Closing the app window normally stops SeeStory automatically. `BUILD.md` documents the explicit stop and shutdown-diagnostic procedures for the uncommon case where a process remains running.
 
 ## Output
 
@@ -128,10 +124,10 @@ Each project folder under `output/` can contain:
 
 ## Troubleshooting
 
-- **The app does not open:** Run `shutdown_diagnostic.bat` and check `logs\launcher.log` and `logs\seestory.log`.
-- **ffmpeg is missing:** Install ffmpeg, restart Windows or the terminal session if needed, and rerun the installer.
-- **The model is missing or incomplete:** Rerun `install_all.bat` or `install_stable_diffusion.bat`. The desktop runtime will not download the model itself.
-- **CUDA is unavailable:** Update the NVIDIA driver and rerun the installer. SeeStory will not silently use the CPU.
+- **The app does not open:** Follow the shutdown-diagnostic procedure in `BUILD.md`, then check `logs\launcher.log` and `logs\seestory.log`.
+- **ffmpeg is missing:** Follow the setup instructions in `BUILD.md`, then restart Windows or the terminal session if needed.
+- **The model is missing or incomplete:** Follow the model-repair instructions in `BUILD.md`. The desktop runtime will not download model weights itself.
+- **CUDA is unavailable:** Update the NVIDIA driver and repeat the GPU verification described in `BUILD.md`. SeeStory will not silently use the CPU.
 - **Out of VRAM:** Close other GPU-heavy programs. SeeStory can retry smaller generation sizes and use model CPU offload, but available VRAM still limits practical resolution.
 - **Garbled text appears in images:** Remove titles, author names, genre terms, and "book cover" wording from the custom-style field.
 - **Repeated scenes in an old project:** Rebuild the storyboard from the original ebook so the current nonduplicating parser and scene-selection logic can be applied.
@@ -139,9 +135,9 @@ Each project folder under `output/` can contain:
 
 ## Repository and Windows launcher rules
 
-Windows `.bat`, `.cmd`, and `.lnk` files are intentionally excluded from git. The downloadable release package includes the BAT launchers, while **[BUILD.md](BUILD.md)** contains their exact contents so they can be recreated from a repository clone.
+Windows `.bat`, `.cmd`, and `.lnk` files are intentionally excluded from git. This README deliberately does not duplicate executable launcher commands. See **[BUILD.md](BUILD.md)** for the quick start instructions and the exact contents of every Windows launcher.
 
-The repository also excludes virtual environments, runtime state, logs, generated output, uploads, shortcuts, local models, and model caches.
+The downloadable release package includes the launcher files for convenience. The repository also excludes virtual environments, runtime state, logs, generated output, uploads, shortcuts, local models, and model caches.
 
 See **[CHANGELOG.md](CHANGELOG.md)** for the complete release history, fixes, validation summary, and upgrade notes.
 
